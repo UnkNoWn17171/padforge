@@ -182,7 +182,8 @@ class OverviewPage(Page):
         box = Gtk.Box(spacing=12, homogeneous=True, margin_top=4)
         for name, title, desc in (
                 ("windows", "WINDOWS+", "Önerilen. Windows'taki gibi hızlı ve isabetli; "
-                                       "3 parmak pencere, 4 parmak çalışma alanı değiştirir."),
+                                       "3 parmak yukarı Super, yanlara pencere; 4 parmak "
+                                       "çalışma alanı değiştirir."),
                 ("macos", "MACOS", "Yavaşta çok hassas. Üç parmakla sürükleme, "
                                    "iki parmakla basınca sağ tık."),
                 ("linux", "SADE", "Sistemin kendi ayarı. Hareketler ve süzülme kapalı.")):
@@ -464,7 +465,8 @@ SHORTCUT_HINT = "Kısayol (ör. <Super>Page_Down veya Ctrl+Alt+T)"
 
 class GesturesPage(Page):
     id, title, icon = "gestures", "Hareketler", "padforge-gesture-symbolic"
-    intro = ("Kolay hatırla: 3 parmak pencere değiştirir, 4 parmak çalışma alanı değiştirir. "
+    intro = ("Kolay hatırla: 3 parmak yukarı Super tuşu, diğer yönler pencere değiştirir; "
+             "4 parmak çalışma alanı değiştirir. "
              "Her satırın sağındaki ▶ hareketi yapmadan işini gösterir.")
 
     def build(self):
@@ -494,9 +496,10 @@ class GesturesPage(Page):
 
         self.binding_rows: dict[str, tuple] = {}
         groups = [
-            ("3 parmak · pencere değiştir",
-             "Üç parmağını koy ve kaydır: pencere menüsü açılır, kaydırdıkça pencereler arasında "
-             "gezersin, parmaklarını kaldırınca seçtiğin pencere öne gelir.",
+            ("3 parmak · Super ve pencere değiştir",
+             "Yukarı: Super tuşuna basılmış gibi (Etkinlikler). Aşağı, sola, sağa: pencere menüsü "
+             "açılır, kaydırdıkça pencereler arasında gezersin, parmaklarını kaldırınca seçtiğin "
+             "pencere öne gelir.",
              ["swipe3_up", "swipe3_down", "swipe3_left", "swipe3_right"]),
             ("4 parmak · çalışma alanı değiştir",
              "Çalışma alanı = ayrı masaüstü sayfası. Dört parmakla sağa/sola kaydırınca "
@@ -775,6 +778,8 @@ class LivePage(Page):
         self.stack.set_visible_child_name("live")
         self.hint.set_label("Demo: sentetik 3 parmak kaydırma. Gerçek veri için erişimi kurun.")
         self.view.set_size_mm(118, 72)
+        b = self.win.get("gestures.bindings.swipe3_up") or {}
+        label = ACTIONS[b["action"]].label if b.get("action") in ACTIONS else "—"
         t0 = time.monotonic()
 
         def step():
@@ -790,8 +795,8 @@ class LivePage(Page):
             self.view.push(Frame(time.monotonic(), None, touches, len(touches), False))
             if 0.75 < phase < 0.8 and not getattr(self, "_flashed", False):
                 self._flashed = True
-                self.view.flash("3↑  Etkinlikler (genel bakış)")
-                self._event("3 parmak kaydırma ↑ → Etkinlikler (genel bakış)")
+                self.view.flash(f"3↑  {label}")
+                self._event(f"3 parmak kaydırma ↑ → {label}")
             if phase > 1.6:
                 self._flashed = False
             return True

@@ -147,3 +147,34 @@ def test_vertical_direction_for_switchers():
     assert Daemon._inc_for("up", "window_cycle") == -1
     assert Daemon._inc_for("right", "window_cycle") == 1
     assert Daemon._inc_for("up", "volume") == 1, "up is still louder"
+
+
+# -- media keys and the Super key --------------------------------------------------------
+@pytest.mark.parametrize("name", sorted(
+    {v for v in actions.KEY_ACTIONS.values() if v.startswith("XF86")}
+    | {"XF86AudioRaiseVolume", "XF86AudioLowerVolume", "XF86MonBrightnessUp",
+       "XF86MonBrightnessDown"}))
+def test_media_key_names_resolve(name):
+    """python-xlib spells them XF86_AudioPlay; the GNOME spelling failed as "unknown key"."""
+    assert actions.keysym_for(name), name
+
+
+def test_keysym_for_known_values():
+    assert actions.keysym_for("XF86AudioPlay") == 0x1008FF14
+    assert actions.keysym_for("XF86_AudioPlay") == 0x1008FF14
+    assert actions.keysym_for("Super_L") == 0xFFEB
+    assert actions.keysym_for("a") == ord("a")
+    assert actions.keysym_for("XF86NoSuchKey") == 0
+
+
+def test_super_key_taps_super():
+    ex = KeyRecorder()
+    ex.run("super_key")
+    assert ex.calls == [("key", 133, True), ("key", 133, False)]
+
+
+def test_super_key_is_a_one_shot_action():
+    assert "super_key" in actions.ACTIONS and "super_key" not in actions.CONTINUOUS
+    ex = make_exec()
+    ex.run("super_key")
+    assert ex.log == ["tuş: <Super>"]

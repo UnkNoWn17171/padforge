@@ -1,4 +1,5 @@
 import json
+import pytest
 
 from padforge import config
 
@@ -106,3 +107,19 @@ def test_recommended_layout_is_safe():
     """Nothing destructive on a gesture that is easy to trigger by accident."""
     actions = {b["action"] for b in config.RECOMMENDED_BINDINGS.values()}
     assert "close_window" not in actions and "command" not in actions
+
+
+def test_recommended_three_fingers_up_is_super():
+    b = config.RECOMMENDED_BINDINGS
+    assert b["swipe3_up"] == {"action": "super_key"}
+    assert all(b[f"swipe3_{d}"] == {"action": "window_cycle"} for d in ("down", "left", "right"))
+
+
+def test_read_leaves_a_half_written_file_alone(tmp_path):
+    """The daemon re-reads while an editor may still be writing: no rename, no defaults."""
+    p = tmp_path / "c.json"
+    p.write_text('{"tap": {"enabled": fal')
+    with pytest.raises(ValueError):
+        config.read(p)
+    assert p.exists() and not (tmp_path / "c.json.broken").exists()
+    assert config.read(tmp_path / "nope.json") == config.defaults()

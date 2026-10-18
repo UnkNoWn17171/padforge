@@ -49,7 +49,8 @@ bunu dengeler (ölçülen 0.78 tık/mm = varsayılanla aynı).
 - **Pencere yönetimi**: başlık çubuğuna dokun, hemen tekrar dokunup kaydır → pencere taşınır
   (çift tık sayılıp büyümez); Super + 1 parmak → imlecin altındaki pencereyi taşı;
   Super + 3 parmak → en yakın köşeden boyutlandır
-- **Pencere menüsü**: 3 parmak, kullanıcının Super+tekerlek menüsünü açar; her 4.5 mm bir pencere
+- **Pencere menüsü**: 3 parmak aşağı/sola/sağa, kullanıcının Super+tekerlek menüsünü açar;
+  her 4.5 mm bir pencere. 3 parmak yukarı = Super tuşu (GNOME'da Etkinlikler)
 - **Canlı test**: touchpad'in gerçek ölçekli görünümü, parmak izleri, tanınan hareketler,
   rapor hızı, ilk rapor gecikmesi, duran parmak titreşimi, okuma gecikmesi
 - **Teşhis**: IRQ/polling modu, I2C uykusu, izinler, çakışan programlar, libinput sürücüsü

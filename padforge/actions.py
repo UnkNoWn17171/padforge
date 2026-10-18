@@ -27,6 +27,7 @@ class ActionInfo:
 ACTIONS: dict[str, ActionInfo] = {
     "none": ActionInfo("Hiçbiri", "Genel"),
     "overview": ActionInfo("Etkinlikler (genel bakış)", "Masaüstü"),
+    "super_key": ActionInfo("Super tuşu (bas-bırak)", "Masaüstü"),
     "app_grid": ActionInfo("Uygulama ızgarası", "Masaüstü"),
     "show_desktop": ActionInfo("Masaüstünü göster / geri getir", "Masaüstü"),
     "workspace_next": ActionInfo("Sonraki çalışma alanı", "Masaüstü"),
@@ -127,6 +128,22 @@ KEY_ALIASES = {
     "backspace": "BackSpace", "print": "Print", "ins": "Insert", "insert": "Insert",
     "+": "plus", "-": "minus", "plus": "plus", "minus": "minus",
 }
+
+
+def keysym_for(name: str) -> int:
+    """X keysym for a key name (0 if unknown).
+
+    GNOME and xdotool write ``XF86AudioPlay``; python-xlib only knows
+    ``XF86_AudioPlay``, so every media key failed as "unknown key" before.
+    """
+    from Xlib import XK
+    XK.load_keysym_group("xf86")
+    keysym = XK.string_to_keysym(name)
+    if not keysym and name.startswith("XF86") and not name.startswith("XF86_"):
+        keysym = XK.string_to_keysym("XF86_" + name[4:])
+    if not keysym and len(name) == 1:
+        keysym = ord(name)
+    return keysym
 
 
 def parse_accelerator(text: str) -> tuple[list[str], str | None]:
@@ -240,9 +257,7 @@ class Executor:
 
     def _keycode(self, keysym_name: str) -> tuple[int, bool]:
         """Keycode for a keysym name, and whether Shift is needed for it."""
-        keysym = self.XK.string_to_keysym(keysym_name)
-        if not keysym and len(keysym_name) == 1:
-            keysym = ord(keysym_name)
+        keysym = keysym_for(keysym_name)
         if not keysym:
             raise ValueError(f"bilinmeyen tuş: {keysym_name}")
         best = None
@@ -393,6 +408,9 @@ class Executor:
             self.workspace(-1)
         elif action == "show_desktop":
             self.show_desktop()
+        elif action == "super_key":
+            # Exactly what tapping the key does (GNOME: the overlay key opens Activities).
+            self.send_shortcut("<Super>")
         elif action == "maximize":
             self.window_state("maximize")
         elif action == "close_window":

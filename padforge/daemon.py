@@ -24,6 +24,7 @@ from typing import Any
 import gi
 gi.require_version("Gio", "2.0")
 from gi.repository import Gio, GLib  # noqa: E402
+from Xlib import error as xerror  # noqa: E402
 
 from . import __version__, accel, config, device, gnome, kinetic, touchegg, vpointer  # noqa: E402
 from . import wm  # noqa: E402
@@ -118,6 +119,7 @@ class Daemon:
         self._drag_pressed = False
 
         self.x = xi.XInput()
+        self.x_alive = True
         self.root = self.x.d.screen().root
         self.xtest_ids: set[int] = set()
         self.executor = Executor(self.x.d, dry_run=dry_run)
@@ -161,25 +163,42 @@ class Daemon:
 
     def _flush_x(self) -> None:
         """python-xlib may queue events while waiting for replies; process them."""
+        if not self.x_alive:
+            return
         try:
             self.x.d.flush()
             while self.x.d.pending_events():
                 self._x_event(self.x.d.next_event())
+        except xerror.ConnectionClosedError:
+            self._x_lost()
         except Exception:
             log.exception("X olayları")
 
+    def _x_lost(self) -> None:
+        """The X server went away (logout, crash): quit instead of spinning on a dead socket.
+
+        The X watch is HIGH priority: an always-readable dead socket would also starve
+        the SIGTERM handler and hold up the logout until systemd's stop timeout.
+        """
+        if self.x_alive:
+            self.x_alive = False
+            log.warning("X bağlantısı koptu; servis kapanıyor")
+            self.loop.quit()
+
     # ----------------------------------------------------------------- startup
     def start(self) -> None:
+        # First: a second copy must stop before it touches devices or settings.
+        self._start_server()
         for dev in self.x.d.xinput_query_device(xi.xinput.AllDevices).devices:
             if "XTEST" in dev.name:
                 self.xtest_ids.add(dev.deviceid)
         self._select_x()
-        GLib.io_add_watch(self.x.d.fileno(), GLib.PRIORITY_HIGH, GLib.IO_IN, self._on_x)
+        GLib.io_add_watch(self.x.d.fileno(), GLib.PRIORITY_HIGH,
+                          GLib.IO_IN | GLib.IO_HUP | GLib.IO_ERR, self._on_x)
         self.rescan()
         self._ensure_vpointer()
         self.apply_all()
         self._watch_config()
-        self._start_server()
         for sig in (signal.SIGTERM, signal.SIGINT):
             GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, sig, self.stop)
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGHUP, self._sighup)
@@ -206,25 +225,26 @@ class Daemon:
         return True
 
     def cleanup(self) -> None:
-        try:
-            self.executor.end()
-            self._stop_coast()
-            for pad in self.pads.values():
-                if pad.tap:
-                    self._tap_events(pad, pad.tap.cancel(time.monotonic()))
-            if self._drag_pressed:
-                self._pointer_button(1, False)
-            # Leave the user with working taps when PadForge is not running.
-            if self._applied_tapping_off and self.cfg["tap"]["enabled"]:
+        if self.x_alive:            # with X gone there is nothing left to release or restore
+            try:
+                self._stop_coast()
                 for pad in self.pads.values():
-                    if pad.xid is not None:
-                        try:
-                            self.x.set_prop(pad.xid, xi.P_TAP, [1])
-                        except Exception:
-                            pass
-            self.x.d.sync()
-        except Exception:
-            log.exception("temizlik")
+                    if pad.tap:
+                        self._tap_events(pad, pad.tap.cancel(time.monotonic()))
+                self._release_held("kapanış")
+                # Leave the user with working taps when PadForge is not running.
+                if self._applied_tapping_off and self.cfg["tap"]["enabled"]:
+                    for pad in self.pads.values():
+                        if pad.xid is not None:
+                            try:
+                                self.x.set_prop(pad.xid, xi.P_TAP, [1])
+                            except Exception:
+                                pass
+                self.x.d.sync()
+            except xerror.ConnectionClosedError:
+                log.warning("X bağlantısı kapanırken koptu")
+            except Exception:
+                log.exception("temizlik")
         self.boost.release()
         if self.vp:
             self.vp.close()
@@ -302,7 +322,13 @@ class Daemon:
         return -k if s["natural"] else k
 
     def reload(self) -> None:
-        new = config.load(self.config_file)
+        try:
+            new = config.read(self.config_file)
+        except (OSError, ValueError) as exc:
+            # Half-written by an editor, or broken: keep running the last good config.
+            self.error(f"ayar dosyası okunamadı, önceki ayarla devam: {exc}")
+            return
+        self.clear_errors("ayar dosyası okunamadı")
         if new == self.cfg:
             return
         self.cfg = new
@@ -392,9 +418,14 @@ class Daemon:
             pad.watch = None
         if pad.tap:
             self._tap_events(pad, pad.tap.cancel(time.monotonic()))
+        if pad.recognizer is not None:
+            for g in pad.recognizer.reset():      # e.g. window menu open: let go of Super now
+                self._gesture(g)
         if pad.reader:
             pad.reader.close()
         self.pads.pop(pad.info.node, None)
+        if all(p.last_count == 0 for p in self.pads.values()):
+            self._release_held(f"{pad.info.name} ayrıldı")
         self.event(f"{pad.info.name} ayrıldı")
 
     def _ensure_vpointer(self) -> None:
@@ -488,8 +519,11 @@ class Daemon:
             self.error(f"XI2 olay seçimi: {exc}")
 
     def _on_x(self, fd, cond) -> bool:
-        self._flush_x()
-        return True
+        if cond & (GLib.IO_HUP | GLib.IO_ERR):
+            self._x_lost()
+        else:
+            self._flush_x()
+        return self.x_alive
 
     def _x_event(self, ev) -> None:
         evtype = getattr(ev, "evtype", None)

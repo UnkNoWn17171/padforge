@@ -151,3 +151,18 @@ def test_picking_custom_preset_starts_from_shown_curve(win):
     data = saved(win)
     assert data["pointer"]["curve"]["preset"] == "custom"
     assert [tuple(p) for p in data["pointer"]["curve"]["points"]] == accel.PRESETS["macos"]
+
+
+def test_change_made_elsewhere_is_picked_up_not_overwritten(win):
+    """E.g. the daemon adopting a GNOME Settings change: the next save here must keep it."""
+    from padforge import config
+    from padforge.gui.pages import ACTION_IDS
+    cfg = config.defaults()
+    cfg["gestures"]["bindings"]["swipe3_up"] = {"action": "minimize"}
+    config.save(cfg, win.cfg_file)
+    win.spin(0.6)
+    assert win.get("gestures.bindings.swipe3_up") == {"action": "minimize"}
+    row, _ = page(win, "gestures").binding_rows["swipe3_up"]
+    assert row.get_selected() == ACTION_IDS.index("minimize")
+    win.set("scroll.natural", not win.get("scroll.natural"))     # an unrelated edit here
+    assert saved(win)["gestures"]["bindings"]["swipe3_up"] == {"action": "minimize"}

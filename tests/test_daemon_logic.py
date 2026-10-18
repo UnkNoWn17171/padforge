@@ -155,3 +155,84 @@ def test_watchdog_keeps_a_real_drag(hand):
     d._flush_x = lambda: None
     d._watchdog()
     assert d.vp.down
+
+
+def test_reload_keeps_running_config_while_file_is_half_written(tmp_path):
+    from padforge import config
+    d = bare()
+    d.config_file = tmp_path / "config.json"
+    d.config_file.write_text('{"scroll": {"nat')
+    d.cfg = config.defaults()
+    d.reload()
+    assert d.cfg == config.defaults()
+    assert d.config_file.exists() and not (tmp_path / "config.json.broken").exists()
+    assert any("ayar dosyası okunamadı" in e for e in d.errors)
+
+
+class DeadDisplay:
+    def flush(self):
+        from Xlib import error
+        raise error.ConnectionClosedError("server")
+
+
+class FakeLoop:
+    def __init__(self):
+        self.quits = 0
+
+    def quit(self):
+        self.quits += 1
+
+
+def test_lost_x_connection_quits_instead_of_spinning():
+    """A dead X socket stays readable: the HIGH priority watch would starve SIGTERM."""
+    from gi.repository import GLib
+    d = bare()
+    d.x = type("X", (), {"d": DeadDisplay()})()
+    d.x_alive, d.loop = True, FakeLoop()
+    d._flush_x()
+    d._flush_x()
+    assert d.x_alive is False and d.loop.quits == 1
+    assert d._on_x(0, GLib.IOCondition.IN) is False, "the X watch removes itself"
+
+
+def test_hangup_on_x_socket_quits():
+    from gi.repository import GLib
+    d = bare()
+    d.x_alive, d.loop = True, FakeLoop()
+    assert d._on_x(0, GLib.IOCondition.HUP) is False and d.loop.quits == 1
+
+
+def test_cleanup_without_x_still_frees_power_hold_and_pointer():
+    d = bare()
+    d.x_alive, d.x = False, None            # any X call would raise
+    freed = []
+    d.boost.release = lambda: freed.append("boost")
+    d.vp = type("VP", (), {"close": lambda self: freed.append("vp")})()
+    d._server = None
+    d.cleanup()
+    assert freed == ["boost", "vp"]
+
+
+class FakeExecutor:
+    def __init__(self):
+        self._cont = "window_cycle"           # Super held for the window menu
+        self.ended = 0
+
+    def end(self):
+        self.ended += 1
+        self._cont = None
+
+
+def test_dropping_a_pad_mid_window_menu_lets_go_of_super():
+    from padforge import config, device
+    from padforge.gestures import GestureRecognizer, _Track
+    d = bare()
+    d.cfg = config.defaults()
+    d.executor, d._drag_pressed, d.pause_clients = FakeExecutor(), False, set()
+    r = GestureRecognizer(continuous_keys={"swipe3_down"})
+    r.state, r.track = r.CONTINUOUS, _Track(n=3, t0=0.0, start={}, key="swipe3_down")
+    pad = daemon.Pad(device.TouchpadInfo(node="/dev/input/event99", name="test", sysfs="/x"), None)
+    pad.recognizer, pad.last_count = r, 3
+    d.pads = {pad.info.node: pad}
+    d._drop_pad(pad)
+    assert d.executor.ended == 1 and d.executor._cont is None and d.pads == {}

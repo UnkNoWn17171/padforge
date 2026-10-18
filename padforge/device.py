@@ -296,7 +296,13 @@ class TouchpadReader:
             keys = set(self.dev.active_keys())
         except OSError:
             keys = set()
-        return self.parser.resync(values, keys, ts)
+        slot = None
+        if mt.ABS_MT_SLOT in self.absinfo:
+            try:
+                slot = self.dev.absinfo(mt.ABS_MT_SLOT).value
+            except OSError:
+                pass
+        return self.parser.resync(values, keys, ts, slot)
 
     def close(self) -> None:
         try:

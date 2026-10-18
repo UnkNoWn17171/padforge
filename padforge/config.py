@@ -21,13 +21,14 @@ GESTURE_KEYS = [
 ] + [f"pinch{n}_{d}" for n in (3, 4) for d in ("in", "out")] + ["tap4"]
 
 # The recommended layout, as simple as possible:
-#   3 fingers, any direction = window switcher (the user's Super+wheel menu);
+#   3 fingers up = the Super key (GNOME: Activities)
+#   3 fingers down/left/right = window switcher (the user's Super+wheel menu);
 #     keep moving to step through windows, lift to open the chosen one
 #   4 fingers left/right = switch workspace, up = see everything, down = desktop
 #   2-finger pinch = zoom; no 3/4-finger pinches, no 4-finger tap
 # Nothing destructive (no "close window") sits on an easily triggered gesture.
 RECOMMENDED_BINDINGS: dict[str, dict] = {
-    "swipe3_up": {"action": "window_cycle"},
+    "swipe3_up": {"action": "super_key"},
     "swipe3_down": {"action": "window_cycle"},
     "swipe3_left": {"action": "window_cycle"},
     "swipe3_right": {"action": "window_cycle"},
@@ -332,6 +333,21 @@ def load(path: Path | None = None) -> dict:
             os.replace(path, str(path) + ".broken")
         except OSError:
             pass
+        return defaults()
+    return validate(raw)
+
+
+def read(path: Path | None = None) -> dict:
+    """Like :func:`load`, but a file that does not parse raises ``ValueError`` and stays put.
+
+    For re-reading while running: an editor may be half-way through writing the file,
+    and :func:`load` would move it aside as ``.broken`` and fall back to the defaults.
+    """
+    path = path or config_path()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except FileNotFoundError:
         return defaults()
     return validate(raw)
 

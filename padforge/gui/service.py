@@ -120,6 +120,7 @@ class LiveReader:
     def _io(self, fd, cond) -> bool:
         if cond & (GLib.IO_HUP | GLib.IO_ERR):
             self.on_event("Touchpad bağlantısı koptu")
+            self.watch = 0                  # returning False removes it; close() must not
             return False
         now = time.monotonic()
         try:
@@ -133,6 +134,7 @@ class LiveReader:
                 self.on_frame(f)
         except OSError:
             self.on_event("Okuma hatası")
+            self.watch = 0
             return False
         self._schedule_tap()
         return True

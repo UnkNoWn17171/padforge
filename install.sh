@@ -62,7 +62,9 @@ say "İlk ayar (mevcut GNOME ayarlarından)"
 systemctl --user daemon-reload
 if [ "$START" = 1 ]; then
     say "Servis etkinleştiriliyor"
-    systemctl --user enable --now padforge.service
+    systemctl --user enable padforge.service
+    # start değil restart: zaten çalışan servis eski kodu bellekte tutmaya devam ederdi
+    systemctl --user restart padforge.service
     sleep 1
     systemctl --user --no-pager --lines=0 status padforge.service | head -3 || true
 else

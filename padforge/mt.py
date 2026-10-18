@@ -202,14 +202,21 @@ class MTParser:
         elif code == ABS_MT_TOUCH_MAJOR:
             s.major = value
 
-    def resync(self, slot_values: dict[int, list[int]], keys: set[int], ts: float) -> Frame:
-        """Replace state after SYN_DROPPED with values read via EVIOCGMTSLOTS/EVIOCGKEY."""
+    def resync(self, slot_values: dict[int, list[int]], keys: set[int], ts: float,
+               slot: int | None = None) -> Frame:
+        """Replace state after SYN_DROPPED with values read via EVIOCGMTSLOTS/EVIOCGKEY.
+
+        ``slot`` is the device's current ABS_MT_SLOT: slot switches were dropped too, and
+        the kernel only sends ABS_MT_SLOT again when the slot changes.
+        """
         for code, vals in slot_values.items():
             for i, v in enumerate(vals[: self.nslots]):
                 saved = self.cur
                 self.cur = i
                 self._abs(code, v)
                 self.cur = saved
+        if slot is not None and 0 <= slot < self.nslots:
+            self.cur = slot
         self.keys = {k: 1 for k in keys}
         return self._frame(ts, resynced=True)
 

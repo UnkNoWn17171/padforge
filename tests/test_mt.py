@@ -174,3 +174,14 @@ def test_frames_are_snapshots():
 ])
 def test_edge_zone(x, y, edge):
     assert mt.in_edge_zone(x, y, 118.5, 72.9) is edge
+
+
+def test_resync_restores_current_slot():
+    """After SYN_DROPPED the next events name no slot unless it changes: use the device's."""
+    p = mt.MTParser(AX, AY, 3)
+    run(p, [ev_abs(mt.ABS_MT_SLOT, 0), ev_abs(mt.ABS_MT_TRACKING_ID, 5),
+            ev_abs(mt.ABS_MT_POSITION_X, 310), SYN])
+    p.resync({mt.ABS_MT_TRACKING_ID: [5, 6, -1], mt.ABS_MT_POSITION_X: [310, 620, 0]},
+             {mt.BTN_TOOL_DOUBLETAP}, 2.0, slot=1)
+    f = run(p, [ev_abs(mt.ABS_MT_POSITION_X, 930), SYN])[-1]
+    assert f.touches[1].x == pytest.approx(30.0) and f.touches[0].x == pytest.approx(10.0)

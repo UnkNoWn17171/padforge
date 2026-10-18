@@ -105,6 +105,13 @@ class MainWindow(Adw.ApplicationWindow):
         GLib.timeout_add(STATUS_POLL_MS, self._poll_tick)
         self.connect("close-request", self._closing)
 
+        # Pick up changes made elsewhere (GNOME Settings adopted by the daemon, an editor,
+        # another window): otherwise the next save here writes the old copy back over them.
+        self._ext_id = 0
+        self._monitor = Gio.File.new_for_path(str(config.config_path())).monitor_file(
+            Gio.FileMonitorFlags.WATCH_MOVES, None)
+        self._monitor.connect("changed", self._file_changed)
+
     # -- navigation -------------------------------------------------------------------
     def _row_selected(self, box, row):
         if row is None:
@@ -128,6 +135,10 @@ class MainWindow(Adw.ApplicationWindow):
         if self._current is not None:
             self._current.hidden()
         self._flush_save()
+        self._monitor.cancel()
+        if self._ext_id:
+            GLib.source_remove(self._ext_id)
+            self._ext_id = 0
         return False
 
     # -- config -----------------------------------------------------------------------
@@ -160,6 +171,25 @@ class MainWindow(Adw.ApplicationWindow):
                                             else "Kaydedildi · servis çalışmıyor")
         except OSError as exc:
             self.toast(f"Kaydedilemedi: {exc}")
+        return False
+
+    def _file_changed(self, *_) -> None:
+        if self._ext_id:
+            GLib.source_remove(self._ext_id)
+        self._ext_id = GLib.timeout_add(150, self._reload_from_disk)
+
+    def _reload_from_disk(self) -> bool:
+        self._ext_id = 0
+        if self._save_id:
+            return False            # an edit made here is about to be saved: it wins
+        try:
+            new = config.read()
+        except (OSError, ValueError):
+            return False            # half-written; the next change event reads it again
+        if new != self.cfg:
+            self.cfg = new
+            for p in self.pages:
+                p.refresh()
         return False
 
     def replace_config(self, cfg: dict) -> None:

@@ -23,8 +23,9 @@ Etiketler: **ÖLÇÜLDÜ** (bu makinede ölçüldü/denendi) · **ÇIKARIM** (ö
 
 - Servis: `active`, `enabled`; touchpad okunuyor (`/dev/input/event5`, X id 14), 143 Hz.
 - Sanal işaretçide basılı kalan tuş yok (`button[1..3]=up`).
-- Birim testleri: 213 geçti (16 atlandı = X/Xephyr isteyen testler).
-- Son commit: bu belge; öncesi `580cf27` (pencere taşıma/boyutlandırma).
+- Birim testleri: 232 geçti (17 atlandı = X/arayüz isteyen testler); gerçek Xorg 10/10,
+  arayüz 7/7 (ekransız: `gtk4-broadwayd`), `padforge selftest` BAŞARILI (2026-10-19).
+- Son iş: `fix/hata-ayiklama-super` dalı (bölüm 6b), kurulu olan bu dal; `main` = `4a8d6e0`.
 
 ## 3. Aktif ayarlar
 
@@ -34,7 +35,8 @@ Etiketler: **ÖLÇÜLDÜ** (bu makinede ölçüldü/denendi) · **ÇIKARIM** (ö
 | Dokunma | PadForge motoru, dokun-sürükle açık, tık ≤180 ms ve ≤1.5 mm, yazarken koruma 250 ms |
 | Tıklama | alt bölge düğmeleri (buttonareas) |
 | Kaydırma | doğal, hız 1.0, ivme 0.3, kinetik açık (sürtünme 2.6) |
-| 3 parmak (her yön) | kendi Super+tekerlek menün (Super Scroll Switch) — her 4.5 mm bir pencere |
+| 3 parmak yukarı | Super tuşu bas-bırak (`super_key`; GNOME'da Etkinlikler) — 2026-10-19 eklendi |
+| 3 parmak aşağı/sol/sağ | kendi Super+tekerlek menün (Super Scroll Switch) — her 4.5 mm bir pencere |
 | 4 parmak | sol/sağ = çalışma alanı, yukarı = genel bakış, aşağı = masaüstü |
 | 2 parmak sıkıştırma | yakınlaştırma |
 | Pencere | başlığa dokun + hemen dokunup kaydır = taşı · Super + 1 parmak = taşı · Super + 3 parmak = boyutlandır |
@@ -75,6 +77,28 @@ Super ile taşıma/boyutlandırma, pilde akıcılık — hepsi "iyi çalışıyo
 - ppd tutma hemen düşüyordu: sistem D-Bus bağlantısı referanssız kalınca kapanıyor → modül düzeyinde tutuluyor.
 - python-evdev tek okumada ≤64 olay döndürüyor → `frames()` tampon boşalana kadar okuyor.
 - Her zaman `/usr/bin/python3` kullan (PATH'teki python `~/venv-ardupilot`).
+
+## 6b. Hata ayıklama turu (2026-10-19, dal `fix/hata-ayiklama-super`)
+
+- **Medya tuşları hiç çalışmıyordu** (ÖLÇÜLDÜ, kayıtta `bilinmeyen tuş: XF86AudioPlay`):
+  python-xlib `XF86_AudioPlay` yazımını istiyor. Ses, parlaklık, oynat/duraklat, parça →
+  `actions.keysym_for` iki yazımı da çözüyor; canlı ekranda tuş kodları doğrulandı.
+- **`install.sh` yeni kodu yüklemiyordu**: `enable --now` çalışan servisi yeniden başlatmaz;
+  artık `restart`.
+- **X bağlantısı koparsa** (çıkış, Xorg çökmesi) ölü soket YÜKSEK öncelikli izleyiciyi
+  sonsuz döngüye sokup SIGTERM'i aç bırakabiliyordu (çıkışı ~90 sn geciktirme riski)
+  → servis temiz kapanıyor (ÇIKARIM + birim testi; gerçek X öldürme denenmedi).
+- **Yarım yazılmış ayar dosyası**: yeniden yüklemede dosya `.broken` diye kenara
+  atılıp varsayılana dönülüyordu → artık son iyi ayarla devam (`config.read`).
+- **Açık arayüz eski kopyayı yazıyordu**: GNOME'dan benimsenen ya da dosyadan yapılan
+  değişiklik, arayüzde bir sonraki ayarda eziliyordu → arayüz dosyayı izliyor.
+- Küçükler: ikinci `padforge daemon` artık hiçbir şeye dokunmadan çıkıyor; kapanışta
+  Super-sürükleme tuşu da bırakılıyor; touchpad ayrılınca açık pencere menüsü (Super)
+  hemen bırakılıyor; SYN_DROPPED sonrası geçerli MT yuvası okunuyor.
+- **Yeni**: `super_key` eylemi (Super bas-bırak). Önerilen düzen ve bu makinedeki ayar:
+  3 parmak yukarı = Super (canlı: Etkinlikler açıldı/kapandı, ÖLÇÜLDÜ).
+- "Logitech USB Receiver" da touchpad olarak açılıyor (Bolt alıcısının boş PTP arayüzü,
+  0 kare) — zararsız.
 
 ## 7. Açık işler
 
