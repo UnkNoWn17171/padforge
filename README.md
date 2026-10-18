@@ -19,6 +19,7 @@ genelde donanım değil, yazılım katmanlarıdır. PadForge bunları tek tek ö
 | Ani ivme sıçraması | libinput "adaptive" eğrisi orta hızdan sonra birden ~3 kat hızlanır (aşağıdaki ölçüm) | Sürüklenebilir, sıçramasız hız eğrisi (Windows/macOS benzeri hazır eğriler) |
 | İlk dokunuşta gecikme | I2C denetleyicisi 1 sn boşta kalınca uyur; ilk hareketi geciktirebilir | Ölçer (ilk rapor gecikmesi) ve tek tıkla uykuyu kapatır |
 | Çift tıklama | Touchégg + libinput birlikte → her 2/3 parmak dokunuşta iki tık | Touchégg hareketlerini içe aktarır, Touchégg'i güvenle kapatır |
+| Pilde kasan geçişler | Pilde işlemci/GPU yavaş hızlanır; GNOME geçişlerinde 144 Hz tazelemelerin ~%11'i atlanır | Hareket anında birkaç saniyelik "performans" profili (ölçülen: genel bakışta atlanan kare medyanı 14 → 0, akıcılık %89 → %98) |
 
 ### Bu makinede ölçülenler
 
@@ -124,7 +125,7 @@ padforge import-touchegg [--disable]   ·   padforge disable-touchegg / enable-t
 ## Testler
 
 ```bash
-python3 -m pytest tests                                       # 194 birim testi
+python3 -m pytest tests                                       # 199 birim testi
 PADFORGE_INTEGRATION=1 python3 -m pytest tests/integration    # 10 test: gerçek Xorg + libinput
 PADFORGE_GUI_DISPLAY=:7 python3 -m pytest tests/integration   # 6 arayüz testi (ör. Xephyr :7)
 padforge selftest

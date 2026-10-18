@@ -477,6 +477,9 @@ class GesturesPage(Page):
                                       "Açıkken 3 parmak kaydırma hareketleri çalışmaz.")
         self.switch(g, "2 parmakla yakınlaştır", "gestures.pinch_zoom_2f",
                     "İki parmağını açınca büyütür, kapatınca küçültür (tarayıcı, belge, resim)")
+        self.switch(g, "Geçişlerde tam performans", "gestures.boost",
+                    "Pildeyken geçişler takılmasın: hareket anında birkaç saniye performans "
+                    "moduna geçer, sonra kendiliğinden döner")
         fine = Adw.ExpanderRow(title="Hassasiyet", subtitle="Hareketin ne kadar kolay tanınacağı")
         g.add(fine)
         self.spin(fine, "Kaydırma mesafesi (mm)", "gestures.swipe_threshold_mm", 3, 60, 0.5, 1,

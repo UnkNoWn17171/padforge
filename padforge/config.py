@@ -100,6 +100,7 @@ DEFAULTS: dict[str, Any] = {
         "step_mm": 16.0,             # distance per step for continuous actions
         "three_finger_drag": False,  # macOS-style; replaces 3-finger swipes
         "pinch_zoom_2f": True,       # 2-finger pinch -> Ctrl+wheel zoom
+        "boost": True,               # brief "performance" power profile while gestures animate
         "bindings": None,          # filled with RECOMMENDED_BINDINGS below
     },
 }

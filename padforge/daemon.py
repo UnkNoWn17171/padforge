@@ -26,6 +26,7 @@ gi.require_version("Gio", "2.0")
 from gi.repository import Gio, GLib  # noqa: E402
 
 from . import __version__, accel, config, device, gnome, kinetic, touchegg, vpointer  # noqa: E402
+from .boost import Boost  # noqa: E402
 from . import xinput as xi  # noqa: E402
 from .actions import CONTINUOUS, VERTICAL_DOWN_IS_NEXT, Executor  # noqa: E402
 from .gestures import GestureEvent, GestureRecognizer  # noqa: E402
@@ -108,6 +109,7 @@ class Daemon:
         self.vp: vpointer.VirtualPointer | None = None
         self.vp_xid: int | None = None
         self.coaster = kinetic.Coaster()
+        self.boost = Boost()
         self._coast_pad: Pad | None = None
         self._xtest_wheel = [0.0, 0.0]
         self._drag_pressed = False
@@ -220,6 +222,7 @@ class Daemon:
             self.x.d.sync()
         except Exception:
             log.exception("temizlik")
+        self.boost.release()
         if self.vp:
             self.vp.close()
         if self._server:
@@ -253,6 +256,9 @@ class Daemon:
 
     def _update_engine_params(self) -> None:
         self.eff = c = self.effective_config()
+        self.boost.enabled = bool(c["gestures"]["enabled"] and c["gestures"]["boost"])
+        if not self.boost.enabled:
+            self.boost.release()
         k = c["scroll"]["kinetic"]
         self.coaster.friction = k["friction"]
         self.coaster.max_duration = k["max_duration"]
@@ -541,6 +547,8 @@ class Daemon:
         was_coasting = self.coaster.active
         if was_coasting and (f.began or f.button):
             self._stop_coast()
+        if f.count >= 3 and f.began:
+            self.boost.hold()          # ramp CPU/GPU up before the animation starts
         gest = pad.recognizer.feed(f) if pad.recognizer else []
         taps = pad.tap.feed(f, self.last_key_time, pad.recognizer.active,
                             coasting=was_coasting) if pad.tap else []
@@ -570,6 +578,7 @@ class Daemon:
 
     def _watchdog(self) -> bool:
         """Every second: nothing may stay held while no finger is on any pad."""
+        self.boost.tick()
         if self._drag_pressed or self.executor._cont is not None:
             now = time.monotonic()
             idle = all(p.last_count == 0 or now - p.last_time > 2.0 for p in self.pads.values())
@@ -618,6 +627,8 @@ class Daemon:
 
     def _gesture(self, g: GestureEvent) -> None:
         bindings = self.cfg["gestures"]["bindings"]
+        if g.kind in ("swipe", "pinch", "begin", "step"):
+            self.boost.hold()
         if g.kind in ("swipe", "pinch"):
             b = bindings.get(g.key, {"action": "none"})
             self.event(f"hareket: {g.key} → {b['action']}")
@@ -815,6 +826,7 @@ class Daemon:
                 self.pause_clients.discard(client if client is not None else -1)
             return {"ok": True, "paused": bool(self.pause_clients)}
         if cmd == "run":
+            self.boost.hold()
             self.executor.run(str(msg.get("action", "none")), msg.get("arg"))
             return {"ok": True}
         if cmd == "reset_stats":
@@ -840,7 +852,7 @@ class Daemon:
             "config": str(self.config_file), "pads": pads,
             "uinput": self.vp is not None, "gnome": self.gnome.available,
             "paused": bool(self.pause_clients), "dry_run": self.dry_run,
-            "touchegg": self.touchegg,
+            "touchegg": self.touchegg, "boost": self.boost.active,
             "errors": self.errors[-10:],
             "events": [{"t": t, "msg": m} for t, m in self.events[-15:]],
         }

@@ -3,7 +3,9 @@ from padforge import daemon
 
 
 def bare():
+    from padforge.boost import Boost
     d = daemon.Daemon.__new__(daemon.Daemon)
+    d.boost = Boost(call=lambda *a: 1)
     d.errors = []
     d.events = []
     d._timers = {}
