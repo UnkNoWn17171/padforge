@@ -1,8 +1,8 @@
 # PadForge
 
 **Linux (X11) için Windows'tan daha iyi bir touchpad.** Ölçülmüş ivme eğrisi, gecikmesiz
-dokunma, 3/4 parmak hareketler, kinetik kaydırma ve donanım teşhisi. Hepsi tek bir
-GTK4/libadwaita arayüzünden, değişiklikler anında uygulanır.
+dokunma, 3/4 parmak hareketler, kinetik kaydırma ve donanım teşhisi. Hepsi mor-siyah neon
+temalı tek bir GTK4/libadwaita arayüzünden; değişiklikler anında uygulanır.
 
 ![İmleç sayfası: sürüklenebilir hız eğrisi](docs/screenshots/pointer.png)
 

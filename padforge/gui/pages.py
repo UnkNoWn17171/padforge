@@ -34,8 +34,16 @@ class Page:
         self.binders: list = []
         self.widget = self.build()
 
+    intro = ""
+
     def build(self) -> Gtk.Widget:
         raise NotImplementedError
+
+    def new_page(self) -> Adw.PreferencesPage:
+        page = Adw.PreferencesPage()
+        if self.intro:
+            page.set_description(self.intro)
+        return page
 
     def refresh(self) -> None:
         self.win.loading += 1
@@ -162,23 +170,22 @@ LEVEL_ICON = {"ok": ("emblem-ok-symbolic", "success"), "info": ("dialog-informat
 
 class OverviewPage(Page):
     id, title, icon = "overview", "Genel bakış", "padforge-overview-symbolic"
+    intro = "Touchpad'ini tanı, sorunları gör, tek tıkla düzelt."
 
     def build(self):
-        page = Adw.PreferencesPage()
-        self.pads_group = self.group(page, "Touchpad", "Çekirdekten okunan donanım bilgisi")
+        page = self.new_page()
+        self.pads_group = self.group(page, "Touchpad", "Bilgisayarındaki dokunmatik yüzeyler")
         self.pad_rows: list = []
 
-        prof = self.group(page, "Hızlı başlangıç",
-                          "Bir profil seçin, sonra istediğiniz ayrıntıyı değiştirin. "
-                          "Değişiklikler anında uygulanır.")
+        prof = self.group(page, "Hazır ayarlar",
+                          "Birini seç, sonra istediğini değiştir. Her değişiklik anında uygulanır.")
         box = Gtk.Box(spacing=12, homogeneous=True, margin_top=4)
         for name, title, desc in (
-                ("windows", "Windows+", "Windows hassasiyeti, gecikmesiz dokunma, kinetik kaydırma, "
-                                       "3/4 parmak hareketler"),
-                ("macos", "macOS benzeri", "Yavaşta çok hassas, güçlü ivme, 3 parmakla sürükleme, "
-                                           "parmak sayısıyla tıklama"),
-                ("linux", "Linux varsayılanı", "libinput'un kendi davranışı; hareketler ve kinetik "
-                                               "kaydırma kapalı")):
+                ("windows", "WINDOWS+", "Hızlı ve isabetli. Dokununca anında tıklar, "
+                                       "sayfa süzülerek kayar."),
+                ("macos", "MACOS", "Yavaşta çok hassas. Üç parmakla sürükleme, "
+                                   "iki parmakla basınca sağ tık."),
+                ("linux", "SADE", "Sistemin kendi ayarı. Hareketler ve süzülme kapalı.")):
             btn = Gtk.Button()
             btn.add_css_class("card")
             btn.add_css_class("profile-card")
@@ -197,7 +204,7 @@ class OverviewPage(Page):
         prof.add(box)
 
         self.checks_group = self.group(page, "Sağlık kontrolü",
-                                       "Gecikme ve yanlış algılamanın bilinen nedenleri")
+                                       "Touchpad'i yavaşlatan ya da yanlış algılatan şeyler")
         refresh = self.button(None, self.run_checks, "flat", "view-refresh-symbolic", "Yenile")
         self.checks_group.set_header_suffix(refresh)
         self.check_rows: list = []
@@ -217,13 +224,12 @@ class OverviewPage(Page):
         stats = {p["node"]: p for p in (status or {}).get("pads", [])}
         for pad in device.list_touchpads():
             st = stats.get(pad.node, {}).get("stats", {})
-            parts = [pad.bus_name, f"{pad.width_mm:.0f}×{pad.height_mm:.0f} mm",
-                     f"{pad.max_fingers} parmak", ", ".join(pad.driver_chain()[:2])]
+            parts = [f"{pad.width_mm:.0f}×{pad.height_mm:.0f} mm", f"{pad.max_fingers} parmağa kadar"]
             if st.get("rate_hz"):
-                parts.append(f"{st['rate_hz']:.0f} Hz")
+                parts.append(f"saniyede {st['rate_hz']:.0f} okuma")
             row = Adw.ActionRow(title=esc(pad.name), subtitle=esc(" · ".join(parts)))
             row.add_prefix(Gtk.Image(icon_name="padforge-overview-symbolic", pixel_size=24))
-            badge = Gtk.Label(label="dahili" if pad.is_internal else "harici")
+            badge = Gtk.Label(label="DAHİLİ" if pad.is_internal else "HARİCİ")
             badge.add_css_class("pill-label")
             badge.set_valign(Gtk.Align.CENTER)
             row.add_suffix(badge)
@@ -261,32 +267,35 @@ class OverviewPage(Page):
 # ============================================================================= pointer
 class PointerPage(Page):
     id, title, icon = "pointer", "İmleç", "padforge-pointer-symbolic"
+    intro = "Yavaş oynatınca hassas, hızlı oynatınca uzağa giden imleç."
 
     def build(self):
-        page = Adw.PreferencesPage()
-        g = self.group(page, "İvme", "Parmak hızına göre imlecin ne kadar yol alacağı")
-        self.profile_row = self.combo(g, "İvme profili", "pointer.profile", [
-            ("custom", "PadForge eğrisi (önerilen)"),
-            ("adaptive", "libinput uyarlanabilir"),
-            ("flat", "libinput düz (ivmesiz)")])
+        page = self.new_page()
+        g = self.group(page, "İmleç hızı")
+        self.profile_row = self.combo(g, "Hız modu", "pointer.profile", [
+            ("custom", "Akıllı eğri (önerilen)"),
+            ("adaptive", "Sistem: uyarlanabilir"),
+            ("flat", "Sistem: sabit hız")],
+            subtitle="Akıllı eğriyi aşağıda kendin şekillendirebilirsin")
         self.profile_row.connect("notify::selected", lambda *_: self._visibility())
-        self.speed_row = self.slider(g, "libinput hızı", "pointer.speed", -1.0, 1.0, 0.01, 2,
+        self.speed_row = self.slider(g, "Hız", "pointer.speed", -1.0, 1.0, 0.01, 2,
                                      marks=[(0.0, None)])
 
         self.curve_group = self.group(page, "Hız eğrisi",
-                                      "Noktaları sürükleyin · boş yere çift tıklayarak nokta "
-                                      "ekleyin · sağ tıkla silin")
+                                      "Yatay: parmağının hızı. Dikey: imlecin ne kadar gittiği. "
+                                      "Noktaları sürükle; boş yere çift tıkla ekle, sağ tıkla sil.")
         self.preset_row = self.combo(self.curve_group, "Hazır eğri", "pointer.curve.preset",
                                      [(k, accel.PRESET_LABELS[k]) for k in
                                       ("windows", "macos", "linux", "precise", "custom")])
         self.preset_row.connect("notify::selected", lambda *_: self._load_curve())
         self.scale_row = self.slider(self.curve_group, "Genel hız", "pointer.curve.scale", 0.4, 2.5,
                                      0.01, 2, formatter=lambda v: f"{v:.2f}×",
+                                     subtitle="Bütün eğriyi birlikte hızlandırır ya da yavaşlatır",
                                      marks=[(1.0, None)])
         self.scale_row.scale.connect("value-changed", lambda *_: self._load_curve())
         self.editor = CurveEditor(on_change=self._curve_edited)
         frame = Gtk.Frame(child=self.editor, margin_top=8)
-        frame.add_css_class("view")
+        frame.add_css_class("pf-canvas")
         self.curve_group.add(frame)
         self.summary = Gtk.Label(xalign=0, wrap=True, margin_top=10)
         self.summary.add_css_class("dim-label")
@@ -329,10 +338,10 @@ class PointerPage(Page):
             pass
         d = accel.describe(c, pad_w, screen_w)
         self.summary.set_label(
-            f"Yavaş (20 mm/sn): {d['slow_px_per_mm']:.1f} px/mm — 1 piksel için "
-            f"{d['precision_mm_per_px'] * 1000:.0f} µm parmak hareketi · "
-            f"Orta (100): {d['medium_px_per_mm']:.1f} px/mm · Hızlı (400): {d['fast_px_per_mm']:.1f} px/mm · "
-            f"Orta hızda ekranı geçmek: pad genişliğinin %{min(999, 100 * d['strokes_per_screen']):.0f}'i")
+            f"Hassasiyet: imleç 1 piksel kayması için parmağını "
+            f"{d['precision_mm_per_px'] * 1000:.0f} mikron oynatman yeter.\n"
+            f"Erişim: orta hızda ekranın bir ucundan öbürüne gitmek için touchpad'in "
+            f"%{min(999, 100 * d['strokes_per_screen']):.0f}'i yeter.")
 
     def _curve_edited(self, points):
         # Go through win.set so the change is detected and saved.
@@ -342,11 +351,11 @@ class PointerPage(Page):
     def shown(self):
         pad = self.win.readable_pad()
         if pad is None:
-            self.live_hint.set_label("Parmak hızı göstergesi için ham dokunma erişimi gerekir.")
+            self.live_hint.set_label("Canlı hız göstergesi için touchpad erişimi kurulmalı.")
             return
         try:
             self.reader = service.LiveReader(pad, self.win.cfg, self._frame, lambda *a, **k: None)
-            self.live_hint.set_label("Touchpad'de parmağını gezdir: turuncu çizgi şu anki hızın.")
+            self.live_hint.set_label("Parmağını gezdir: parlayan çizgi şu anki hızını gösterir.")
         except Exception as exc:
             self.live_hint.set_label(f"Canlı okuma açılamadı: {exc}")
 
@@ -364,76 +373,78 @@ class PointerPage(Page):
 # ================================================================================= tap
 class TapPage(Page):
     id, title, icon = "tap", "Dokunma ve tıklama", "padforge-tap-symbolic"
+    intro = "Basmadan dokunarak tıkla. Parmağını kaldırdığın an tıklar."
 
     def build(self):
-        page = Adw.PreferencesPage()
-        g = self.group(page, "Dokunarak tıklama")
-        self.switch(g, "Dokunarak tıkla", "tap.enabled")
-        self.engine = self.combo(g, "Dokunma motoru", "tap.engine", [
-            ("padforge", "Gecikmesiz — PadForge (önerilen)"),
-            ("libinput", "Standart — libinput")],
-            subtitle="libinput, dokun-sürükle açıkken her tıklamayı ~180 ms bekletir. "
-                     "PadForge parmak kalktığı anda tıklar.")
+        page = self.new_page()
+        g = self.group(page, "Dokunma")
+        self.switch(g, "Dokunarak tıkla", "tap.enabled", "Basmana gerek yok, hafifçe dokunman yeter")
+        self.engine = self.combo(g, "Tepki", "tap.engine", [
+            ("padforge", "Anında (önerilen)"),
+            ("libinput", "Sistem (yaklaşık 0,2 sn gecikmeli)")],
+            subtitle="Anında: parmağını kaldırdığın an tıklar")
         self.combo(g, "Çok parmakla dokunma", "tap.button_map", [
-            ("lrm", "2 parmak: sağ tık · 3 parmak: orta tık"),
-            ("lmr", "2 parmak: orta tık · 3 parmak: sağ tık")])
+            ("lrm", "2 parmak sağ tık, 3 parmak orta tık"),
+            ("lmr", "2 parmak orta tık, 3 parmak sağ tık")])
         self.switch(g, "Dokun ve sürükle", "tap.drag",
-                    "Dokun, hemen tekrar dokunup kaydır: sürükler (Windows'taki gibi)")
+                    "İki kez dokun, ikincide parmağını kaydır: tutup sürükler")
         self.switch(g, "Sürükleme kilidi", "tap.drag_lock",
-                    "Sürüklerken parmağı kaldırıp yeniden konumlandırabilirsin; bitirmek için dokun")
+                    "Sürüklerken parmağını kaldırıp devam edebilirsin; bırakmak için dokun")
         fine = Adw.ExpanderRow(title="İnce ayar",
-                               subtitle="Dokunmanın ne zaman tıklama sayılacağı")
+                               subtitle="Bir dokunuşun tıklama sayılma sınırları")
         g.add(fine)
-        self.spin(fine, "En uzun dokunma süresi (ms)", "tap.max_duration_ms", 60, 400, 5)
-        self.spin(fine, "En fazla kayma (mm)", "tap.max_move_mm", 0.3, 6.0, 0.1, 1)
-        self.spin(fine, "Sürükleme için ikinci dokunma süresi (ms)", "tap.drag_window_ms", 80, 600, 10)
-        self.spin(fine, "Sürükleme kilidi bekleme (ms)", "tap.drag_lock_ms", 100, 2000, 50)
-        self.spin(fine, "Yazdıktan sonra dokunmayı yok say (ms)", "tap.typing_guard_ms", 0, 2000, 25,
-                  subtitle="Yazarken avuç değmesi tıklama olmasın")
+        self.spin(fine, "En uzun dokunuş (ms)", "tap.max_duration_ms", 60, 400, 5,
+                  subtitle="Bundan uzun tutarsan tıklama sayılmaz")
+        self.spin(fine, "En fazla kayma (mm)", "tap.max_move_mm", 0.3, 6.0, 0.1, 1,
+                  subtitle="Parmak bundan fazla kayarsa imleç hareketi sayılır")
+        self.spin(fine, "Sürüklemek için ikinci dokunuş (ms)", "tap.drag_window_ms", 80, 600, 10)
+        self.spin(fine, "Sürükleme kilidi süresi (ms)", "tap.drag_lock_ms", 100, 2000, 50)
+        self.spin(fine, "Yazdıktan sonra bekleme (ms)", "tap.typing_guard_ms", 0, 2000, 25,
+                  subtitle="Yazarken avucun değerse tıklama olmasın")
 
-        g2 = self.group(page, "Fiziksel tıklama")
-        self.combo(g2, "Sağ tık nasıl yapılır", "click.method", [
+        g2 = self.group(page, "Basarak tıklama")
+        self.combo(g2, "Sağ tık", "click.method", [
             ("buttonareas", "Sağ alt köşeye bas"),
-            ("clickfinger", "İki parmakla bas (macOS gibi)")])
-        self.switch(g2, "Orta tık öykünmesi", "click.middle_emulation",
-                    "Sol ve sağa birlikte basınca orta tık")
-        self.switch(g2, "Solak kullanım", "click.left_handed")
+            ("clickfinger", "İki parmakla bas")])
+        self.switch(g2, "Orta tık", "click.middle_emulation",
+                    "Sol ve sağ köşeye birlikte basınca orta tık")
+        self.switch(g2, "Solak kullanım", "click.left_handed", "Sol ve sağ tık yer değiştirir")
 
         g3 = self.group(page, "Yazarken")
         self.switch(g3, "Yazarken touchpad'i kapat", "typing.disable_while_typing",
-                    "libinput her tuştan sonra 0,2–0,5 sn imleci kilitler. Yazdıktan hemen sonra "
-                    "imleç tepki vermiyorsa kapatın.")
+                    "Avucun değince imleç kaçmaz. Yazdıktan sonra imleç geç tepki veriyorsa kapat.")
         return page
 
 
 # ============================================================================== scroll
 class ScrollPage(Page):
     id, title, icon = "scroll", "Kaydırma", "padforge-scroll-symbolic"
+    intro = "İki parmakla kaydır; hızlıca fırlatınca sayfa süzülerek devam etsin."
 
     def build(self):
-        page = Adw.PreferencesPage()
+        page = self.new_page()
         g = self.group(page, "Kaydırma")
-        self.combo(g, "Yöntem", "scroll.method", [
-            ("twofinger", "İki parmakla"), ("edge", "Kenardan"), ("none", "Kapalı")])
-        self.switch(g, "Doğal kaydırma", "scroll.natural", "İçerik parmağı takip eder")
-        self.switch(g, "Yatay kaydırma", "scroll.horizontal")
-        self.slider(g, "Kaydırma hızı", "scroll.speed", 0.25, 3.0, 0.05, 2,
+        self.combo(g, "Nasıl kaydırılsın", "scroll.method", [
+            ("twofinger", "İki parmakla"), ("edge", "Sağ kenardan"), ("none", "Kapalı")])
+        self.switch(g, "Doğal yön", "scroll.natural", "Sayfa parmağını takip eder (telefondaki gibi)")
+        self.switch(g, "Yana kaydırma", "scroll.horizontal")
+        self.slider(g, "Hız", "scroll.speed", 0.25, 3.0, 0.05, 2,
                     formatter=lambda v: f"{v:.2f}×", marks=[(1.0, None)])
-        self.slider(g, "Kaydırma ivmesi", "scroll.acceleration", 0.0, 2.0, 0.05, 2,
-                    subtitle="Hızlı kaydırınca daha uzağa gider (yalnızca PadForge eğrisiyle)",
+        self.slider(g, "Hızlanma", "scroll.acceleration", 0.0, 2.0, 0.05, 2,
+                    subtitle="Hızlı kaydırınca sayfa daha uzağa gider (akıllı eğri açıkken)",
                     marks=[(0.0, None)])
-        k = self.group(page, "Kinetik kaydırma",
-                       "X11 uygulamaları parmak kalkınca kaydırmayı kendileri sürdürmez. PadForge "
-                       "parmağın kalkış hızını ölçer ve kaydırmayı yumuşakça yavaşlatarak sürdürür; "
-                       "touchpad'e dokunmak veya bir tuşa basmak durdurur.")
-        self.switch(k, "Kinetik kaydırma", "scroll.kinetic.enabled")
-        self.slider(k, "Sürtünme", "scroll.kinetic.friction", 0.8, 8.0, 0.1, 1,
-                    subtitle="Düşük = uzun süzülme", marks=[(2.6, None)])
+        k = self.group(page, "Süzülme",
+                       "Parmağını hızlıca kaldırınca sayfa bir süre kaymaya devam eder. "
+                       "Touchpad'e dokunmak ya da bir tuşa basmak durdurur.")
+        self.switch(k, "Süzülerek kaydır", "scroll.kinetic.enabled")
+        self.slider(k, "Fren", "scroll.kinetic.friction", 0.8, 8.0, 0.1, 1,
+                    subtitle="Az: uzun süzülür · Çok: çabuk durur", marks=[(2.6, None)])
         self.slider(k, "Fırlatma gücü", "scroll.kinetic.gain", 0.3, 2.5, 0.05, 2,
+                    subtitle="Süzülmenin ne kadar hızlı başlayacağı",
                     formatter=lambda v: f"{v:.2f}×", marks=[(1.0, None)])
-        self.spin(k, "Başlama eşiği (mm/sn)", "scroll.kinetic.min_speed", 5, 500, 5,
-                  subtitle="Parmak kalkarken bundan yavaşsa süzülme olmaz")
-        self.spin(k, "En uzun süzülme (sn)", "scroll.kinetic.max_duration", 0.3, 15.0, 0.1, 1)
+        self.spin(k, "Başlama hızı (mm/sn)", "scroll.kinetic.min_speed", 5, 500, 5,
+                  subtitle="Parmağın bundan yavaş kalkarsa süzülme olmaz")
+        self.spin(k, "En uzun süre (sn)", "scroll.kinetic.max_duration", 0.3, 15.0, 0.1, 1)
         return page
 
 
@@ -452,24 +463,26 @@ SHORTCUT_HINT = "Kısayol (ör. <Super>Page_Down veya Ctrl+Alt+T)"
 
 class GesturesPage(Page):
     id, title, icon = "gestures", "Hareketler", "padforge-gesture-symbolic"
+    intro = "3 ve 4 parmakla kaydır ya da sıkıştır; her harekete bir iş ata. ▶ ile dene."
 
     def build(self):
-        page = Adw.PreferencesPage()
+        page = self.new_page()
         g = self.group(page, "Genel")
         self.switch(g, "Çok parmaklı hareketler", "gestures.enabled",
-                    "GNOME'un X11 oturumunda touchpad hareketi yoktur; PadForge ekler")
+                    "3 ve 4 parmakla kaydırma ve sıkıştırma")
         self.three_drag = self.switch(g, "3 parmakla sürükle", "gestures.three_finger_drag",
-                                      "macOS gibi: 3 parmakla pencere/metin sürükle "
-                                      "(3 parmak kaydırma hareketlerinin yerini alır)")
-        self.switch(g, "2 parmak sıkıştırma = yakınlaştır", "gestures.pinch_zoom_2f",
-                    "Ctrl+tekerlek gönderir (tarayıcı, belge, görüntü)")
-        fine = Adw.ExpanderRow(title="Hassasiyet")
+                                      "Pencereyi ya da yazıyı 3 parmakla tutup taşı. "
+                                      "Açıkken 3 parmak kaydırma hareketleri çalışmaz.")
+        self.switch(g, "2 parmakla yakınlaştır", "gestures.pinch_zoom_2f",
+                    "İki parmağı açıp kapatınca tarayıcıda ve belgelerde yakınlaştırır")
+        fine = Adw.ExpanderRow(title="Hassasiyet", subtitle="Hareketin ne kadar kolay tanınacağı")
         g.add(fine)
-        self.spin(fine, "Kaydırma eşiği (mm)", "gestures.swipe_threshold_mm", 3, 60, 0.5, 1,
-                  subtitle="Hareketin tanınması için gereken yol")
-        self.spin(fine, "Sürekli eylem adımı (mm)", "gestures.step_mm", 4, 80, 1, 0,
-                  subtitle="Uygulama değiştirme, ses gibi eylemlerde her adım")
+        self.spin(fine, "Kaydırma mesafesi (mm)", "gestures.swipe_threshold_mm", 3, 60, 0.5, 1,
+                  subtitle="Parmakların bu kadar kayınca hareket tanınır")
+        self.spin(fine, "Adım mesafesi (mm)", "gestures.step_mm", 4, 80, 1, 0,
+                  subtitle="Uygulama değiştirme ve ses gibi sürekli işlerde her adım")
         self.slider(fine, "Sıkıştırma eşiği", "gestures.pinch_threshold", 0.05, 0.9, 0.01, 2,
+                    subtitle="Parmaklar arası mesafe bu oranda değişince",
                     formatter=lambda v: f"%{v * 100:.0f}")
 
         self.binding_rows: dict[str, tuple] = {}
@@ -546,7 +559,7 @@ class GesturesPage(Page):
         drag = self.win.get("gestures.three_finger_drag")
         for key in ("swipe3_up", "swipe3_down", "swipe3_left", "swipe3_right"):
             self.binding_rows[key][0].set_sensitive(not drag)
-            self.binding_rows[key][0].set_subtitle("3 parmakla sürükleme açık" if drag else "")
+            self.binding_rows[key][0].set_subtitle("3 parmakla sürükle açıkken çalışmaz" if drag else "")
 
     def _test(self, key):
         b = self.win.get(f"gestures.bindings.{key}")
@@ -561,10 +574,9 @@ class LivePage(Page):
         self.stack = Gtk.Stack()
         # -- no access
         status = Adw.StatusPage(icon_name="padforge-live-symbolic",
-                                title="Ham dokunma verisine erişim yok",
-                                description="Canlı görünüm, hareketler, gecikmesiz dokunma ve kinetik "
-                                            "kaydırma touchpad'in ham verisini okumayı gerektirir. "
-                                            "Bir kez yönetici olarak kurun:")
+                                title="Touchpad erişimi kurulmamış",
+                                description="Canlı görünüm, hareketler, anında dokunma ve süzülme için "
+                                            "bir kez yönetici izni gerekir:")
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, halign=Gtk.Align.CENTER)
         cmd = f"sudo bash {diagnostics.helper_script()}"
         lbl = Gtk.Label(label=cmd, selectable=True, wrap=True)
@@ -598,10 +610,15 @@ class LivePage(Page):
                        margin_bottom=12, margin_start=6, margin_end=12)
         stats_group = Adw.PreferencesGroup(title="Ölçümler")
         self.stat_rows = {}
-        for key, title in (("fingers", "Parmak"), ("rate", "Rapor hızı"), ("jitter", "Aralık sapması"),
-                           ("wake", "İlk rapor gecikmesi"), ("noise", "Duran parmak titreşimi"),
-                           ("latency", "Çekirdek → uygulama"), ("frames", "Kare / dokunuş")):
-            row = Adw.ActionRow(title=title)
+        for key, title, sub in (
+                ("fingers", "Parmak", "şu an / en çok"),
+                ("rate", "Okuma hızı", "touchpad saniyede kaç kez bildiriyor"),
+                ("jitter", "Düzensizlik", "bildirimler arası sapma"),
+                ("wake", "İlk dokunuş gecikmesi", "dokunup ilk bilgi gelene kadar"),
+                ("noise", "Titreme", "parmak dururken oynama"),
+                ("latency", "Yazılım gecikmesi", "çekirdekten PadForge'a"),
+                ("frames", "Kare / dokunuş", "toplam")):
+            row = Adw.ActionRow(title=title, subtitle=sub)
             val = Gtk.Label(label="—")
             val.add_css_class("numeric")
             row.add_suffix(val)
@@ -615,7 +632,7 @@ class LivePage(Page):
         self.run_switch.connect("notify::active", lambda *_: self._pause_state())
         side.append(sw_group)
         log_title = Gtk.Label(label="Tanınanlar", xalign=0)
-        log_title.add_css_class("heading")
+        log_title.add_css_class("pf-section")
         side.append(log_title)
         self.log = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         self.log.add_css_class("boxed-list")
@@ -648,8 +665,8 @@ class LivePage(Page):
             self.hint.set_label(f"Açılamadı: {exc}")
             return
         self.view.set_size_mm(self.reader.reader.axis_x.size_mm, self.reader.reader.axis_y.size_mm)
-        self.hint.set_label(f"{pad.name} · {self.reader.reader.resolution:g} birim/mm · "
-                            "parmaklarını koy, kaydır, sıkıştır; sabit tutarak titreşimi ölç")
+        self.hint.set_label("Parmaklarını koy, kaydır, sıkıştır. Bir parmağı sabit tutarsan "
+                            "titreme ölçülür.")
         self._pause_state()
         self._timer = GLib.timeout_add(400, self._update_stats)
 
@@ -748,11 +765,12 @@ class LivePage(Page):
 # ============================================================================ advanced
 class AdvancedPage(Page):
     id, title, icon = "advanced", "Gelişmiş", "padforge-advanced-symbolic"
+    intro = "Arka plan servisi, sistem düzeltmeleri ve ayar yedeği."
 
     def build(self):
-        page = Adw.PreferencesPage()
+        page = self.new_page()
         g = self.group(page, "Arka plan servisi",
-                       "Ayarları uygular, hareketleri ve kinetik kaydırmayı çalıştırır")
+                       "Hareketleri, anında dokunmayı ve süzülmeyi bu servis çalıştırır")
         self.svc_row = Adw.ActionRow(title="Durum", subtitle="…")
         self.svc_row.add_suffix(self.button("Yeniden başlat", lambda: self._svc("restart"), "flat"))
         self.svc_toggle = self.button("Başlat", lambda: self._svc("start"), "flat")

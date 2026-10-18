@@ -13,6 +13,7 @@ OK, INFO, WARN, ERROR = "ok", "info", "warn", "error"
 
 WAKE_OK_MS = 3.0            # first-report delay below this is not noticeable
 WAKE_SAMPLES_NEEDED = 5
+NOISE_WARN_MM = 0.25        # measured resting noise here: 0.12-0.14 mm (<1 px of cursor)
 
 # /proc/<pid>/comm prefix -> (label, fix command)
 CONFLICTING = {
@@ -68,14 +69,13 @@ def i2c_sleep_check(stats: dict, script: str) -> Check:
     wake_max, n = stats.get("wake_delay_max_ms"), stats.get("wake_samples", 0)
     measured = isinstance(wake_max, (int, float))
     if measured and n >= WAKE_SAMPLES_NEEDED and wake_max < WAKE_OK_MS:
-        return Check(OK, "I2C uykusu gecikme yaratmıyor",
-                     f"{n} dokunuşta ilk rapor en çok {wake_max:.1f} ms gecikti; "
-                     "uykuyu kapatmaya gerek yok.")
-    detail = ("Parmak dokunduğunda denetleyicinin uyanması ilk hareketi geciktirebilir."
-              + (f" Ölçülen en kötü ilk rapor gecikmesi: {wake_max:.1f} ms ({n} dokunuş)."
-                 if measured else " Henüz ölçülmedi: touchpad'i biraz kullanınca kesinleşir."))
+        return Check(OK, "Touchpad yongasının uykusu sorun değil",
+                     f"{n} dokunuşta ilk bilgi en çok {wake_max:.1f} ms gecikti; sorun yok.")
+    detail = ("Uyanması ilk dokunuşu geciktirebilir."
+              + (f" Ölçülen en kötü gecikme {wake_max:.1f} ms ({n} dokunuş)."
+                 if measured else " Touchpad'i biraz kullanınca ölçülür."))
     level = WARN if measured and wake_max >= WAKE_OK_MS else INFO
-    return Check(level, "I2C denetleyicisi boşta uykuya geçiyor", detail,
+    return Check(level, "Touchpad yongası boşta uyuyor", detail,
                  fix=f"sudo bash {script} --power-fix")
 
 
@@ -112,42 +112,38 @@ def run_checks(status: dict | None = None, cfg: dict | None = None,
     checks: list[Check] = []
     session = os.environ.get("XDG_SESSION_TYPE", "")
     if session == "wayland":
-        checks.append(Check(ERROR, "Wayland oturumu",
-                            "PadForge şu an yalnızca X11 oturumunda çalışıyor."))
+        checks.append(Check(ERROR, "Wayland oturumu desteklenmiyor",
+                            "PadForge şimdilik yalnızca X11 (Xorg) oturumunda çalışır."))
     elif os.environ.get("DISPLAY"):
-        checks.append(Check(OK, "X11 oturumu", f"DISPLAY={os.environ['DISPLAY']}"))
+        checks.append(Check(OK, "Masaüstü oturumu uygun", "X11 oturumu"))
 
     pads = device.list_touchpads()
     if not pads:
         checks.append(Check(ERROR, "Touchpad bulunamadı",
-                            "Çekirdek touchpad olarak işaretlenmiş bir giriş aygıtı yok."))
+                            "Sistem hiçbir aygıtı touchpad olarak tanımıyor."))
         return checks
     script = helper_script()
     for pad in pads:
-        drivers = ", ".join(pad.driver_chain()) or "?"
-        caps = [f"{pad.max_fingers} parmak", f"{pad.width_mm:.0f}×{pad.height_mm:.0f} mm"]
-        caps.append("basınç var" if pad.has_pressure else "basınç yok")
-        if pad.has_hw_timestamp:
-            caps.append("donanım zaman damgası")
-        if pad.is_clickpad:
-            caps.append("tıklanabilir yüzey")
-        checks.append(Check(OK, f"{pad.name}",
-                            f"{pad.bus_name} · {pad.node} · sürücü: {drivers} · " + ", ".join(caps)))
+        caps = [("dahili" if pad.is_internal else "harici"),
+                f"{pad.width_mm:.0f}×{pad.height_mm:.0f} mm", f"{pad.max_fingers} parmağa kadar"]
+        if not pad.has_pressure:
+            caps.append("basınç algılamaz")
+        checks.append(Check(OK, f"{pad.name}", " · ".join(caps)))
         if not pad.readable:
-            checks.append(Check(ERROR, "Ham dokunma verisine erişim yok",
-                                f"{pad.node} okunamıyor. Hareketler, gecikmesiz dokunma, kinetik "
-                                "kaydırma ve özel ivme eğrisi bu izin olmadan çalışmaz.",
+            checks.append(Check(ERROR, "Touchpad erişimi kurulmamış",
+                                "Hareketler, anında dokunma, süzülme ve akıllı hız eğrisi için bir "
+                                "kez yönetici izni gerekir.",
                                 fix=f"sudo bash {script}"))
         if pad.bustype == 0x18:
             name = pad.sysfs.split("/i2c-")[-1].split("/")[0] if "/i2c-" in pad.sysfs else ""
             irq, count = device.irq_count(name) if name else (None, 0)
             if irq is None:
-                checks.append(Check(WARN, "Kesme (IRQ) bulunamadı",
-                                    "Touchpad yoklama (polling) modunda olabilir; bu gecikme ve "
-                                    "kaçan hareket demektir. dmesg'de i2c_hid uyarılarına bakın."))
+                checks.append(Check(WARN, "Touchpad yavaş modda olabilir",
+                                    "Kesme bulunamadı; touchpad sorgulanarak okunuyor olabilir. "
+                                    "Bu gecikme ve kaçan hareket demektir."))
             else:
-                checks.append(Check(OK, "Kesme modunda çalışıyor",
-                                    f"IRQ {irq} ({device.irq_line(name)}), {count} kesme"))
+                checks.append(Check(OK, "Touchpad hızlı modda",
+                                    f"Her dokunuşu anında bildiriyor (kesme {irq})."))
             sleepy = [(p, st) for p, st, ctl in pad.power_parents() if ctl == "auto"]
             if sleepy:
                 st = {}
@@ -157,63 +153,57 @@ def run_checks(status: dict | None = None, cfg: dict | None = None,
                             st = sp.get("stats", {})
                 checks.append(i2c_sleep_check(st, script))
             elif pad.power_parents():
-                checks.append(Check(OK, "I2C denetleyici uykusu kapalı", ""))
+                checks.append(Check(OK, "Touchpad yongası uyumuyor",
+                                    "İlk dokunuşta bekleme olmaz."))
 
     if not os.access("/dev/uinput", os.R_OK | os.W_OK):
-        checks.append(Check(INFO, "/dev/uinput erişimi yok",
-                            "Kinetik kaydırma XTest ile (tık tık) çalışır; pürüzsüz kaydırma için "
-                            "uinput erişimi gerekir."))
+        checks.append(Check(INFO, "Pürüzsüz süzülme için izin yok",
+                            "Süzülme yine çalışır ama kademeli kayar."))
 
     for name, fix in running_conflicts():
-        detail = "İki hareket programı aynı anda çalışırsa hareketler iki kez tetiklenir."
+        detail = "İki hareket programı birlikte çalışırsa her hareket iki kez olur."
         if name == "Touchégg":
-            detail = ("Touchégg'in 2/3 parmak dokunma eylemleri libinput'un kendi dokunmasıyla "
-                      "birleşince her dokunuş çift tık olur; 2 parmak sıkıştırmayı da Xorg'dan ayrı "
-                      "yorumlar. Hareketlerini PadForge'a aktarıp Touchégg'i kapatın "
-                      "(geri almak: padforge enable-touchegg).")
+            detail = ("Touchégg ile PadForge aynı işi yapıyor; dokunuşlar çift tık olabilir. "
+                      "Hareketlerini PadForge'a aktarıp Touchégg'i kapat (geri alınabilir).")
         checks.append(Check(WARN, f"{name} çalışıyor", detail, fix=fix))
 
     tap = cfg["tap"]
     if tap["enabled"] and tap["engine"] == "libinput" and tap["drag"]:
-        checks.append(Check(INFO, "Dokunma tıklamaları ~180 ms gecikiyor",
-                            "libinput dokun-sürükle açıkken her tıklamanın bırakılmasını 180 ms "
-                            "bekletir. PadForge'un gecikmesiz dokunma motorunu açın."))
+        checks.append(Check(INFO, "Dokunarak tıklama yaklaşık 0,2 sn gecikiyor",
+                            "Dokunma › Tepki ayarında 'Anında'yı seç."))
     if cfg["typing"]["disable_while_typing"]:
-        checks.append(Check(INFO, "Yazarken touchpad kilitleniyor",
-                            "libinput her tuştan sonra touchpad'i 0,2–0,5 sn kapatır. Yazdıktan hemen "
-                            "sonra imleç tepkisizse bunu kapatın; PadForge dokunmalar için ayrıca "
-                            f"{tap['typing_guard_ms']} ms koruma uygular."))
+        checks.append(Check(INFO, "Yazarken touchpad kısa süre kilitlenir",
+                            "Her tuştan sonra 0,2–0,5 sn. Yazdıktan hemen sonra imleç tepkisizse "
+                            "Dokunma › Yazarken ayarını kapat."))
 
     if status is None:
-        checks.append(Check(WARN, "PadForge servisi çalışmıyor",
-                            "Ayarlar kalıcı uygulanmıyor ve hareketler çalışmıyor.",
+        checks.append(Check(WARN, "PadForge servisi kapalı",
+                            "Hareketler, anında dokunma ve süzülme çalışmıyor.",
                             fix="systemctl --user enable --now padforge.service"))
     else:
-        checks.append(Check(OK, "PadForge servisi çalışıyor",
-                            f"sürüm {status.get('version')}, pid {status.get('pid')}"))
+        checks.append(Check(OK, "PadForge servisi çalışıyor", f"sürüm {status.get('version')}"))
         for sp in status.get("pads", []):
             st = sp.get("stats", {})
             rate = st.get("rate_hz")
             if rate:
                 level = OK if rate >= 100 else WARN
-                jitter, gaps = st.get("interval_jitter_ms"), st.get("gap_percent")
-                extra = f", sapma {jitter:.2f} ms" if jitter is not None else ""
-                if gaps is not None:
-                    extra += f", kaçan/geciken rapor %{gaps:.1f}"
-                    if gaps > 5:
-                        level = WARN
-                checks.append(Check(level, f"Rapor hızı {rate:.0f} Hz",
-                                    f"{sp.get('name')}: ölçülen{extra}"))
+                gaps = st.get("gap_percent")
+                extra = f" Kaçan bildirim %{gaps:.1f}." if gaps is not None else ""
+                if gaps is not None and gaps > 5:
+                    level = WARN
+                checks.append(Check(level, f"Okuma hızı {rate:.0f} Hz",
+                                    f"Touchpad saniyede {rate:.0f} kez konum bildiriyor.{extra}"))
             noise = st.get("noise_mm")
             if noise is not None:
-                level = OK if noise < 0.08 else WARN
-                checks.append(Check(level, f"Duran parmak titreşimi {noise:.3f} mm",
-                                    "Yüksekse imleç kendi kendine kıpırdar."))
+                level = OK if noise < NOISE_WARN_MM else WARN
+                checks.append(Check(level, f"Titreme {noise:.2f} mm",
+                                    "Parmak dururken çok az oynuyor, sorun yok." if level == OK
+                                    else "Parmak dururken imleç kendi kendine kıpırdayabilir."))
         for err in status.get("errors", [])[-3:]:
             checks.append(Check(WARN, "Servis uyarısı", err))
     if xprops is not None and not xprops:
-        checks.append(Check(WARN, "libinput X sürücüsü görünmüyor",
-                            "xserver-xorg-input-libinput kurulu olmalı (synaptics değil)."))
+        checks.append(Check(WARN, "Touchpad sürücüsü eksik",
+                            "xserver-xorg-input-libinput paketi gerekli."))
     return checks
 
 

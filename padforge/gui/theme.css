@@ -1,0 +1,230 @@
+/* PadForge — neon / cyberpunk theme: near-black violet surfaces, purple accents,
+   magenta and cyan highlights. Loaded over libadwaita's dark style. */
+
+@define-color pf_void      #07040e;
+@define-color pf_deep      #0c0717;
+@define-color pf_panel     #120b21;
+@define-color pf_card      #170e2a;
+@define-color pf_card_hi   #21133b;
+@define-color pf_line      #33205a;
+@define-color pf_purple    #a855f7;
+@define-color pf_violet    #7c3aed;
+@define-color pf_magenta   #ff2bd6;
+@define-color pf_cyan      #22e4ff;
+@define-color pf_text      #efe8ff;
+@define-color pf_dim       #a493c9;
+
+@define-color accent_bg_color     #8b2cf5;
+@define-color accent_fg_color     #ffffff;
+@define-color accent_color        #c58bff;
+@define-color destructive_bg_color #e11d74;
+@define-color destructive_color   #ff5fa8;
+@define-color success_color       #3df5c8;
+@define-color success_bg_color    #0f9f83;
+@define-color warning_color       #ffcc4d;
+@define-color warning_bg_color    #c98a00;
+@define-color error_color         #ff5f8f;
+@define-color error_bg_color      #d6245a;
+
+@define-color window_bg_color     @pf_void;
+@define-color window_fg_color     @pf_text;
+@define-color view_bg_color       @pf_panel;
+@define-color view_fg_color       @pf_text;
+@define-color headerbar_bg_color  @pf_deep;
+@define-color headerbar_fg_color  @pf_text;
+@define-color headerbar_border_color @pf_line;
+@define-color headerbar_backdrop_color @pf_deep;
+@define-color headerbar_shade_color alpha(@pf_purple, 0.25);
+@define-color sidebar_bg_color    @pf_deep;
+@define-color sidebar_fg_color    @pf_text;
+@define-color sidebar_backdrop_color @pf_deep;
+@define-color sidebar_shade_color alpha(@pf_purple, 0.25);
+@define-color card_bg_color       @pf_card;
+@define-color card_fg_color       @pf_text;
+@define-color card_shade_color    alpha(#000000, 0.6);
+@define-color popover_bg_color    #140c25;
+@define-color popover_fg_color    @pf_text;
+@define-color dialog_bg_color     #110a1f;
+@define-color dialog_fg_color     @pf_text;
+@define-color shade_color         alpha(#000000, 0.5);
+
+/* ---- window --------------------------------------------------------------- */
+window.padforge {
+  background-color: @pf_void;
+  background-image:
+    radial-gradient(ellipse at 100% 0%, alpha(@pf_violet, 0.20), transparent 55%),
+    radial-gradient(ellipse at 0% 100%, alpha(@pf_magenta, 0.07), transparent 50%);
+}
+window.padforge .navigation-sidebar,
+window.padforge .sidebar-pane {
+  background-color: alpha(@pf_deep, 0.92);
+}
+window.padforge headerbar {
+  background-color: alpha(@pf_deep, 0.85);
+  box-shadow: inset 0 -1px alpha(@pf_purple, 0.35);
+}
+
+/* Brand title */
+.pf-brand {
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 800;
+  letter-spacing: 3px;
+  color: @pf_text;
+  text-shadow: 0 0 8px alpha(@pf_magenta, 0.75), 0 0 18px alpha(@pf_purple, 0.6);
+}
+.pf-tagline {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.78em;
+  letter-spacing: 2px;
+  color: @pf_cyan;
+}
+
+/* Page intro line under the header */
+.pf-intro {
+  font-size: 1.05em;
+  color: @pf_dim;
+  margin: 18px 12px 0 12px;
+}
+.pf-intro-title {
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 700;
+  font-size: 1.55em;
+  letter-spacing: 1px;
+  color: @pf_text;
+  text-shadow: 0 0 10px alpha(@pf_purple, 0.55);
+}
+
+/* ---- sidebar -------------------------------------------------------------- */
+.navigation-sidebar > row {
+  border-radius: 10px;
+  margin: 2px 6px;
+  color: @pf_dim;
+  transition: all 150ms ease;
+}
+.navigation-sidebar > row:hover {
+  background-color: alpha(@pf_purple, 0.10);
+  color: @pf_text;
+}
+.navigation-sidebar > row:selected {
+  background-image: linear-gradient(90deg, alpha(@pf_violet, 0.45), alpha(@pf_magenta, 0.12));
+  color: #ffffff;
+  box-shadow: inset 3px 0 0 @pf_magenta;
+}
+.navigation-sidebar > row:selected image {
+  color: @pf_magenta;
+  -gtk-icon-shadow: 0 0 6px alpha(@pf_magenta, 0.8);
+}
+
+/* ---- groups & rows -------------------------------------------------------- */
+preferencesgroup > box > box > box > label.title,
+preferencesgroup .heading {
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: 1.5px;
+  color: @accent_color;
+}
+.boxed-list {
+  border: 1px solid alpha(@pf_purple, 0.28);
+}
+.boxed-list > row:hover {
+  background-color: alpha(@pf_purple, 0.07);
+}
+row .subtitle {
+  color: @pf_dim;
+}
+
+/* switches, sliders, buttons */
+switch:checked {
+  background-image: linear-gradient(90deg, @pf_violet, @pf_magenta);
+  box-shadow: 0 0 12px alpha(@pf_magenta, 0.55);
+}
+scale highlight {
+  background-image: linear-gradient(90deg, @pf_violet, @pf_magenta);
+  box-shadow: 0 0 8px alpha(@pf_magenta, 0.5);
+}
+scale slider {
+  background-color: #ffffff;
+  box-shadow: 0 0 0 2px @pf_magenta, 0 0 10px alpha(@pf_magenta, 0.8);
+}
+button.suggested-action {
+  background-image: linear-gradient(90deg, @pf_violet, #c026d3);
+  box-shadow: 0 0 14px alpha(@pf_magenta, 0.45);
+  color: #ffffff;
+}
+button.suggested-action:hover {
+  box-shadow: 0 0 20px alpha(@pf_magenta, 0.7);
+}
+banner > revealer > widget {
+  background-image: linear-gradient(90deg, alpha(@pf_magenta, 0.30), alpha(@pf_violet, 0.30));
+  color: #ffffff;
+}
+
+/* profile cards on the overview */
+.profile-card {
+  padding: 0;
+  border-radius: 14px;
+  background-color: @pf_card;
+  border: 1px solid alpha(@pf_purple, 0.35);
+  transition: all 160ms ease;
+}
+.profile-card:hover {
+  border-color: @pf_magenta;
+  box-shadow: 0 0 18px alpha(@pf_magenta, 0.45), inset 0 0 22px alpha(@pf_violet, 0.20);
+}
+.profile-card .title-3 {
+  font-family: "JetBrains Mono", monospace;
+  letter-spacing: 1px;
+  color: @pf_text;
+}
+.pf-chip {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.75em;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: @pf_cyan;
+  background-color: alpha(@pf_cyan, 0.12);
+  border: 1px solid alpha(@pf_cyan, 0.45);
+}
+.pill-label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.78em;
+  padding: 2px 9px;
+  border-radius: 999px;
+  color: @pf_magenta;
+  background-color: alpha(@pf_magenta, 0.12);
+  border: 1px solid alpha(@pf_magenta, 0.4);
+}
+
+/* numbers on the live page */
+.numeric {
+  font-family: "JetBrains Mono", monospace;
+  font-feature-settings: "tnum";
+  color: @pf_cyan;
+}
+
+/* drawing frames */
+.pf-canvas {
+  border-radius: 14px;
+  border: 1px solid alpha(@pf_purple, 0.45);
+  background-color: #090512;
+  box-shadow: 0 0 26px alpha(@pf_violet, 0.25), inset 0 0 40px alpha(#000000, 0.6);
+}
+
+/* status page (no access) */
+statuspage .title {
+  font-family: "JetBrains Mono", monospace;
+  text-shadow: 0 0 10px alpha(@pf_magenta, 0.6);
+}
+.monospace.card {
+  padding: 10px 14px;
+  color: @pf_cyan;
+  border: 1px solid alpha(@pf_cyan, 0.35);
+}
+
+.pf-section {
+  font-family: "JetBrains Mono", monospace;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: @accent_color;
+}

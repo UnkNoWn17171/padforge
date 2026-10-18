@@ -17,6 +17,7 @@ STATUS_POLL_MS = 2000
 class MainWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="PadForge")
+        self.add_css_class("padforge")
         self.set_default_size(1080, 780)
         self.set_size_request(380, 480)
         self.cfg = config.load()
@@ -31,8 +32,14 @@ class MainWindow(Adw.ApplicationWindow):
         # -- sidebar
         side_view = Adw.ToolbarView()
         side_header = Adw.HeaderBar()
-        title = Adw.WindowTitle(title="PadForge", subtitle="touchpad")
-        side_header.set_title_widget(title)
+        brand = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, valign=Gtk.Align.CENTER)
+        name = Gtk.Label(label="PADFORGE")
+        name.add_css_class("pf-brand")
+        tag = Gtk.Label(label="// touchpad")
+        tag.add_css_class("pf-tagline")
+        brand.append(name)
+        brand.append(tag)
+        side_header.set_title_widget(brand)
         side_view.add_top_bar(side_header)
         self.nav = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
         self.nav.add_css_class("navigation-sidebar")

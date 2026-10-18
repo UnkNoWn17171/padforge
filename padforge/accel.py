@@ -44,11 +44,11 @@ PRESETS: dict[str, list[Point]] = {
 }
 
 PRESET_LABELS = {
-    "windows": "Windows benzeri",
-    "macos": "macOS benzeri",
-    "linux": "Linux varsayılanı (ölçülen)",
-    "precise": "Düz (ivmesiz)",
-    "custom": "Özel eğri",
+    "windows": "Windows gibi",
+    "macos": "macOS gibi",
+    "linux": "Eski Linux ayarın",
+    "precise": "Sabit (ivmesiz)",
+    "custom": "Kendi eğrim",
 }
 
 

@@ -81,7 +81,7 @@ def test_switch_row_writes_config(win):
             walk(child)
             child = child.get_next_sibling()
     walk(scroll.widget)
-    natural = next(r for r in rows if r.get_title() == "Doğal kaydırma")
+    natural = next(r for r in rows if r.get_title() == "Doğal yön")
     before = win.get("scroll.natural")
     natural.set_active(not before)
     assert saved(win)["scroll"]["natural"] is (not before)
@@ -130,7 +130,7 @@ def test_spin_row_integer_stays_integer(win):
     found = []
 
     def walk(widget):
-        if isinstance(widget, Adw.SpinRow) and "dokunma süresi" in widget.get_title():
+        if isinstance(widget, Adw.SpinRow) and "En uzun dokunuş" in widget.get_title():
             found.append(widget)
         child = widget.get_first_child()
         while child is not None:

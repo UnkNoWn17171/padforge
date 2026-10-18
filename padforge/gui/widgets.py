@@ -13,29 +13,37 @@ from gi.repository import Gdk, Gtk, Pango, PangoCairo  # noqa: E402
 from .. import accel  # noqa: E402
 
 VMAX = 800.0          # mm/s shown on the x axis
-SLOT_COLORS = [(0.21, 0.52, 0.89), (0.90, 0.38, 0.0), (0.18, 0.62, 0.31),
-               (0.57, 0.25, 0.67), (0.75, 0.11, 0.16), (0.39, 0.39, 0.39)]
+
+# Neon palette (matches theme.css)
+MAGENTA = (1.0, 0.17, 0.84)
+PURPLE = (0.66, 0.33, 0.97)
+VIOLET = (0.49, 0.23, 0.93)
+CYAN = (0.13, 0.89, 1.0)
+LIME = (0.62, 1.0, 0.35)
+AMBER = (1.0, 0.72, 0.25)
+DIM = (0.64, 0.58, 0.79)
+SLOT_COLORS = [CYAN, MAGENTA, LIME, AMBER, PURPLE, (1.0, 1.0, 1.0)]
 
 
-def _fg(widget) -> tuple[float, float, float]:
-    c = widget.get_color()
-    return c.red, c.green, c.blue
+def _glow_stroke(cr, color, width: float) -> None:
+    """Stroke the current path as a neon line: wide soft halo, then a bright core."""
+    for w, a in ((width * 5, 0.07), (width * 3, 0.14), (width * 1.8, 0.35)):
+        cr.set_source_rgba(*color, a)
+        cr.set_line_width(w)
+        cr.stroke_preserve()
+    cr.set_source_rgba(*color, 1.0)
+    cr.set_line_width(width)
+    cr.stroke()
 
 
-def _accent(widget) -> tuple[float, float, float]:
-    try:                                   # libadwaita >= 1.6: system accent colour
-        from gi.repository import Adw
-        c = Adw.StyleManager.get_default().get_accent_color_rgba()
-        return c.red, c.green, c.blue
-    except Exception:
-        pass
-    try:
-        ok, c = widget.get_style_context().lookup_color("accent_bg_color")
-        if ok:
-            return c.red, c.green, c.blue
-    except Exception:
-        pass
-    return 0.21, 0.52, 0.89
+def _glow_dot(cr, x: float, y: float, r: float, color) -> None:
+    import cairo
+    g = cairo.RadialGradient(x, y, 0, x, y, r * 3.2)
+    g.add_color_stop_rgba(0, *color, 0.55)
+    g.add_color_stop_rgba(1, *color, 0.0)
+    cr.set_source(g)
+    cr.arc(x, y, r * 3.2, 0, 2 * math.pi)
+    cr.fill()
 
 
 def _text(widget, cr, text: str, x: float, y: float, size: float = 9.5, bold: bool = False,
@@ -186,106 +194,114 @@ class CurveEditor(Gtk.DrawingArea):
 
     # -- drawing ---------------------------------------------------------------------
     def _draw(self, area, cr, width, height):
-        fg = _fg(self)
-        acc = _accent(self)
         x0, y0, w, h = self._area()
-        cr.set_line_width(1)
         # grid + labels
+        cr.set_line_width(1)
         for v in (0, 25, 50, 100, 200, 400, 800):
             px, _ = self._to_px(v, 0)
-            cr.set_source_rgba(*fg, 0.10)
+            cr.set_source_rgba(*PURPLE, 0.16)
             cr.move_to(px + 0.5, y0)
             cr.line_to(px + 0.5, y0 + h)
             cr.stroke()
-            cr.set_source_rgba(*fg, 0.55)
+            cr.set_source_rgba(*DIM, 0.9)
             _text(self, cr, f"{v}", px, y0 + h + 15, align="center")
         step = 10 if self._ymax <= 80 else 20
         g = 0
         while g <= self._ymax + 0.1:
             _, py = self._to_px(0, g)
-            cr.set_source_rgba(*fg, 0.10)
+            cr.set_source_rgba(*PURPLE, 0.16)
             cr.move_to(x0, py + 0.5)
             cr.line_to(x0 + w, py + 0.5)
             cr.stroke()
-            cr.set_source_rgba(*fg, 0.55)
+            cr.set_source_rgba(*DIM, 0.9)
             _text(self, cr, f"{g}", x0 - 8, py, align="right", valign="middle")
             g += step
-        cr.set_source_rgba(*fg, 0.55)
+        cr.set_source_rgba(*DIM, 0.9)
         _text(self, cr, "parmak hızı (mm/sn) →", x0 + w, y0 + h + 30, align="right")
         cr.save()
         cr.translate(14, y0 + h / 2)
         cr.rotate(-math.pi / 2)
-        _text(self, cr, "piksel / mm →", 0, 0, align="center", valign="middle")
+        _text(self, cr, "imleç hareketi (piksel/mm) →", 0, 0, align="center", valign="middle")
         cr.restore()
 
-        # reference: stock libinput (measured)
-        cr.set_source_rgba(*fg, 0.35)
-        cr.set_dash([4, 4])
-        cr.set_line_width(1.5)
+        # reference: the stock behaviour measured on this machine
+        cr.set_dash([5, 5])
         for i in range(0, 161):
             v = (i / 160) ** 2 * VMAX
             px, py = self._to_px(v, self.reference(v))
             (cr.move_to if i == 0 else cr.line_to)(px, py)
+        cr.set_source_rgba(*CYAN, 0.45)
+        cr.set_line_width(1.5)
         cr.stroke()
         cr.set_dash([])
 
-        # the curve
+        # the curve, glowing; filled area underneath
         curve = accel.MonotoneCurve(self.points)
-        cr.set_source_rgb(*acc)
-        cr.set_line_width(2.5)
+        pts = []
         for i in range(0, 241):
             v = (i / 240) ** 2 * VMAX
-            px, py = self._to_px(v, curve(v) * self.scale)
+            pts.append(self._to_px(v, curve(v) * self.scale))
+        import cairo
+        fill = cairo.LinearGradient(0, y0, 0, y0 + h)
+        fill.add_color_stop_rgba(0, *MAGENTA, 0.22)
+        fill.add_color_stop_rgba(1, *VIOLET, 0.0)
+        cr.move_to(pts[0][0], y0 + h)
+        for px, py in pts:
+            cr.line_to(px, py)
+        cr.line_to(pts[-1][0], y0 + h)
+        cr.close_path()
+        cr.set_source(fill)
+        cr.fill()
+        for i, (px, py) in enumerate(pts):
             (cr.move_to if i == 0 else cr.line_to)(px, py)
-        cr.stroke()
+        _glow_stroke(cr, MAGENTA, 2.4)
 
         # live finger speed marker
         if self.marker_speed is not None:
             v = min(VMAX, self.marker_speed)
             px, py = self._to_px(v, curve(v) * self.scale)
-            cr.set_source_rgba(0.90, 0.38, 0.0, 0.85)
-            cr.set_line_width(1.5)
             cr.move_to(px, y0)
             cr.line_to(px, y0 + h)
-            cr.stroke()
+            _glow_stroke(cr, CYAN, 1.2)
+            _glow_dot(cr, px, py, 5, CYAN)
+            cr.set_source_rgb(*CYAN)
             cr.arc(px, py, 5, 0, 2 * math.pi)
             cr.fill()
 
         # control points
         for i, (v, g) in enumerate(self.points):
             px, py = self._to_px(v, g * self.scale)
-            r = 7 if i in (self._hover, self._drag) else 5.5
+            active = i in (self._hover, self._drag)
+            r = 7.5 if active else 5.5
+            _glow_dot(cr, px, py, r, MAGENTA)
             cr.arc(px, py, r, 0, 2 * math.pi)
-            cr.set_source_rgb(*acc)
+            cr.set_source_rgb(0.04, 0.02, 0.08)
             cr.fill_preserve()
-            cr.set_source_rgb(1, 1, 1)
-            cr.set_line_width(2)
+            cr.set_source_rgb(*MAGENTA)
+            cr.set_line_width(2.5)
             cr.stroke()
-            if i in (self._hover, self._drag):
-                cr.set_source_rgba(*fg, 0.9)
+            if active:
+                cr.set_source_rgb(1, 1, 1)
                 txt = f"{v:.0f} mm/sn → {g * self.scale:.1f} px/mm"
-                tx = min(max(x0 + 70, px), x0 + w - 70)
-                _text(self, cr, txt, tx, max(y0 + 14, py - 12), bold=True, align="center")
+                tx = min(max(x0 + 80, px), x0 + w - 80)
+                _text(self, cr, txt, tx, max(y0 + 14, py - 14), bold=True, align="center")
 
         # legend
         lx, ly = x0 + 12, y0 + 16
-        cr.set_source_rgb(*acc)
-        cr.set_line_width(2.5)
         cr.move_to(lx, ly - 4)
         cr.line_to(lx + 18, ly - 4)
-        cr.stroke()
-        cr.set_source_rgba(*fg, 0.8)
-        _text(self, cr, "PadForge eğrisi", lx + 24, ly - 4, valign="middle")
-        cr.set_source_rgba(*fg, 0.35)
-        cr.set_dash([4, 4])
-        cr.set_line_width(1.5)
+        _glow_stroke(cr, MAGENTA, 2.2)
+        cr.set_source_rgba(1, 1, 1, 0.9)
+        _text(self, cr, "senin eğrin", lx + 24, ly - 4, valign="middle")
+        cr.set_dash([5, 5])
         cr.move_to(lx, ly + 12)
         cr.line_to(lx + 18, ly + 12)
+        cr.set_source_rgba(*CYAN, 0.7)
+        cr.set_line_width(1.5)
         cr.stroke()
         cr.set_dash([])
-        cr.set_source_rgba(*fg, 0.8)
-        _text(self, cr, "libinput varsayılanı (bu makinede ölçülen)", lx + 24, ly + 12,
-              valign="middle")
+        cr.set_source_rgba(*DIM, 1)
+        _text(self, cr, "eski Linux ayarın (ölçüldü)", lx + 24, ly + 12, valign="middle")
 
 
 class TouchView(Gtk.DrawingArea):
@@ -347,42 +363,56 @@ class TouchView(Gtk.DrawingArea):
         return (width - w) / 2, (height - h) / 2, w, h, s
 
     def _draw(self, area, cr, width, height):
-        fg = _fg(self)
-        acc = _accent(self)
+        import cairo
         x0, y0, w, h, s = self._rect(width, height)
-        r = 14
-        cr.new_sub_path()
-        cr.arc(x0 + w - r, y0 + r, r, -math.pi / 2, 0)
-        cr.arc(x0 + w - r, y0 + h - r, r, 0, math.pi / 2)
-        cr.arc(x0 + r, y0 + h - r, r, math.pi / 2, math.pi)
-        cr.arc(x0 + r, y0 + r, r, math.pi, 3 * math.pi / 2)
-        cr.close_path()
         pressed = self.frame is not None and self.frame.button
-        cr.set_source_rgba(*acc, 0.16 if pressed else 0.07)
-        cr.fill_preserve()
-        cr.set_source_rgba(*(acc if pressed else fg), 0.9 if pressed else 0.25)
-        cr.set_line_width(2 if pressed else 1.2)
-        cr.stroke()
+        r = 16
+
+        def outline():
+            cr.new_sub_path()
+            cr.arc(x0 + w - r, y0 + r, r, -math.pi / 2, 0)
+            cr.arc(x0 + w - r, y0 + h - r, r, 0, math.pi / 2)
+            cr.arc(x0 + r, y0 + h - r, r, math.pi / 2, math.pi)
+            cr.arc(x0 + r, y0 + r, r, math.pi, 3 * math.pi / 2)
+            cr.close_path()
+
+        # surface
+        bg = cairo.LinearGradient(0, y0, 0, y0 + h)
+        bg.add_color_stop_rgb(0, 0.07, 0.04, 0.13)
+        bg.add_color_stop_rgb(1, 0.03, 0.02, 0.06)
+        outline()
+        cr.set_source(bg)
+        cr.fill()
         # 10 mm grid
-        cr.set_source_rgba(*fg, 0.06)
+        cr.save()
+        outline()
+        cr.clip()
+        cr.set_source_rgba(*PURPLE, 0.10)
         cr.set_line_width(1)
         mm = 10
         while mm < self.width_mm:
-            cr.move_to(x0 + mm * s + 0.5, y0 + 4)
-            cr.line_to(x0 + mm * s + 0.5, y0 + h - 4)
+            cr.move_to(x0 + mm * s + 0.5, y0)
+            cr.line_to(x0 + mm * s + 0.5, y0 + h)
             mm += 10
         mm = 10
         while mm < self.height_mm:
-            cr.move_to(x0 + 4, y0 + mm * s + 0.5)
-            cr.line_to(x0 + w - 4, y0 + mm * s + 0.5)
+            cr.move_to(x0, y0 + mm * s + 0.5)
+            cr.line_to(x0 + w, y0 + mm * s + 0.5)
             mm += 10
         cr.stroke()
-        cr.set_source_rgba(*fg, 0.45)
-        _text(self, cr, f"{self.width_mm:.0f} × {self.height_mm:.0f} mm", x0 + 12, y0 + h - 10)
+        cr.restore()
+        # neon edge
+        outline()
+        _glow_stroke(cr, MAGENTA if pressed else PURPLE, 2.0 if pressed else 1.3)
+        cr.set_source_rgba(*DIM, 1)
+        _text(self, cr, f"{self.width_mm:.0f} × {self.height_mm:.0f} mm", x0 + 14, y0 + h - 12)
+        if pressed:
+            cr.set_source_rgba(*MAGENTA, 1)
+            _text(self, cr, "BASILI", x0 + w - 14, y0 + h - 12, bold=True, align="right")
 
         if self.frame is None:
-            cr.set_source_rgba(*fg, 0.5)
-            _text(self, cr, "Touchpad'e dokun…", x0 + w / 2, y0 + h / 2, size=14,
+            cr.set_source_rgba(*DIM, 1)
+            _text(self, cr, "touchpad'e dokun_", x0 + w / 2, y0 + h / 2, size=15,
                   align="center", valign="middle")
             return
 
@@ -391,45 +421,58 @@ class TouchView(Gtk.DrawingArea):
             if len(trail) < 2:
                 continue
             col = SLOT_COLORS[tid % len(SLOT_COLORS)]
-            cr.set_line_width(3)
-            for (t1, xa, ya), (t2, xb, yb) in zip(trail, list(trail)[1:]):
+            pts = list(trail)
+            for (t1, xa, ya), (t2, xb, yb) in zip(pts, pts[1:]):
                 age = (self.frame.time - t2) / self.TRAIL_S
-                cr.set_source_rgba(*col, max(0.0, 0.6 * (1 - age)))
+                a = max(0.0, 1 - age)
                 cr.move_to(x0 + xa * s, y0 + ya * s)
                 cr.line_to(x0 + xb * s, y0 + yb * s)
+                cr.set_source_rgba(*col, 0.25 * a)
+                cr.set_line_width(9)
+                cr.stroke_preserve()
+                cr.set_source_rgba(*col, 0.85 * a)
+                cr.set_line_width(2.5)
                 cr.stroke()
         # fingers
         for t in self.frame.touches.values():
-            col = (0.85, 0.2, 0.2) if t.palm else SLOT_COLORS[t.tracking_id % len(SLOT_COLORS)]
+            col = (1.0, 0.25, 0.35) if t.palm else SLOT_COLORS[t.tracking_id % len(SLOT_COLORS)]
             cx, cy = x0 + t.x * s, y0 + t.y * s
-            rad = max(10.0, 5.5 * s)
+            rad = max(11.0, 5.5 * s)
+            _glow_dot(cr, cx, cy, rad, col)
             cr.arc(cx, cy, rad, 0, 2 * math.pi)
-            cr.set_source_rgba(*col, 0.28)
+            cr.set_source_rgba(*col, 0.18)
             cr.fill_preserve()
-            cr.set_source_rgba(*col, 0.95)
+            cr.set_source_rgba(*col, 1)
             cr.set_line_width(2.5)
             cr.stroke()
-            cr.set_source_rgba(*col, 1)
             label = "avuç" if t.palm else str(t.slot + 1)
+            cr.set_source_rgba(1, 1, 1, 1)
             _text(self, cr, label, cx, cy, size=10.5, bold=True, align="center", valign="middle")
         # recognised gesture flash
         if self.label and time.monotonic() - self.label_time < 1.6:
             alpha = 1.0 - (time.monotonic() - self.label_time) / 1.6
             layout = self.create_pango_layout(self.label)
             desc = self.get_pango_context().get_font_description().copy()
-            desc.set_size(int(15 * Pango.SCALE))
+            desc.set_family("JetBrains Mono, monospace")
+            desc.set_size(int(14 * Pango.SCALE))
             desc.set_weight(Pango.Weight.BOLD)
             layout.set_font_description(desc)
             _ink, log = layout.get_pixel_extents()
-            bw, bh = log.width + 28, log.height + 14
-            bx, by = x0 + (w - bw) / 2, y0 + 14
-            r = bh / 2
+            bw, bh = log.width + 30, log.height + 14
+            bx, by = x0 + (w - bw) / 2, y0 + 16
+            rr = bh / 2
             cr.new_sub_path()
-            cr.arc(bx + bw - r, by + r, r, -math.pi / 2, math.pi / 2)
-            cr.arc(bx + r, by + r, r, math.pi / 2, 3 * math.pi / 2)
+            cr.arc(bx + bw - rr, by + rr, rr, -math.pi / 2, math.pi / 2)
+            cr.arc(bx + rr, by + rr, rr, math.pi / 2, 3 * math.pi / 2)
             cr.close_path()
-            cr.set_source_rgba(*acc, 0.92 * alpha)
-            cr.fill()
+            grad = cairo.LinearGradient(bx, 0, bx + bw, 0)
+            grad.add_color_stop_rgba(0, *VIOLET, 0.92 * alpha)
+            grad.add_color_stop_rgba(1, *MAGENTA, 0.92 * alpha)
+            cr.set_source(grad)
+            cr.fill_preserve()
+            cr.set_source_rgba(*MAGENTA, 0.6 * alpha)
+            cr.set_line_width(6)
+            cr.stroke()
             cr.set_source_rgba(1, 1, 1, alpha)
-            cr.move_to(bx + 14, by + 7)
+            cr.move_to(bx + 15, by + 7)
             PangoCairo.show_layout(cr, layout)
