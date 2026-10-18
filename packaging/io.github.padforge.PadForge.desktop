@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=PadForge
+GenericName=Touchpad ayarları
+Comment=Touchpad hassasiyeti, hareketler, gecikmesiz dokunma ve teşhis
+Exec=@BIN@/padforge gui
+Icon=io.github.padforge.PadForge
+Terminal=false
+Categories=Settings;HardwareSettings;GTK;
+Keywords=touchpad;dokunmatik;fare;imleç;hareket;gesture;kaydırma;scroll;
+StartupNotify=true

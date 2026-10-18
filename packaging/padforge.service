@@ -1,0 +1,15 @@
+[Unit]
+Description=PadForge touchpad servisi (ayarlar, hareketler, kinetik kaydırma)
+Documentation=https://github.com/UnkNoWn17171/padforge
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+Environment=PYTHONPATH=@PREFIX@/lib
+ExecStart=@PY@ -m padforge daemon
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target

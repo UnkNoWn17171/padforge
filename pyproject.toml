@@ -1,0 +1,16 @@
+[project]
+name = "padforge"
+version = "0.1.0"
+description = "Precise touchpad settings, gestures, zero-latency taps and kinetic scrolling for Linux/X11"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+# System packages (Debian/Ubuntu): python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 python3-evdev python3-xlib
+dependencies = ["PyGObject", "evdev", "python-xlib"]
+
+[project.scripts]
+padforge = "padforge.__main__:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
