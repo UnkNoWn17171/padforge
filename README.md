@@ -140,6 +140,9 @@ Entegrasyon testleri `/dev/uinput` ile sanal touchpad/fare oluşturur ve X aygı
 (Xephyr) pencereyi açıp anahtar, profil, eğri ve kısayol düzenlemenin ayar dosyasına doğru
 yazıldığını denetler.
 
+Kurulum durumu, ölçümler, açık işler ve geri alma komutları: [docs/DEVIR-TESLIM.md](docs/DEVIR-TESLIM.md).
+Ölçüm araçları `tools/` altında.
+
 ## Kaldırma
 
 ```bash
