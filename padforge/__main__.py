@@ -61,6 +61,7 @@ def _fmt_summary(s) -> str:
     def f(v, unit, nd=1):
         return f"{v:.{nd}f} {unit}" if isinstance(v, (int, float)) else "—"
     return (f"rapor {f(s.rate_hz, 'Hz', 0)} · sapma {f(s.interval_jitter_ms, 'ms', 2)} · "
+            f"boşluk %{f(s.gap_percent, '', 1)} · "
             f"ilk rapor gecikmesi {f(s.wake_delay_ms, 'ms')} (en çok {f(s.wake_delay_max_ms, 'ms')}) · "
             f"okuma {f(s.read_latency_ms, 'ms', 2)} · titreşim {f(s.noise_mm, 'mm', 3)} · "
             f"{s.frames} kare, {s.sessions} dokunuş, en çok {s.max_fingers} parmak")

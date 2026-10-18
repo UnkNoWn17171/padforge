@@ -691,7 +691,10 @@ class LivePage(Page):
         f = self.view.frame
         self.stat_rows["fingers"].set_label(f"{f.count if f else 0} (en çok {s.max_fingers})")
         self.stat_rows["rate"].set_label(fmt(s.rate_hz, " Hz", 0))
-        self.stat_rows["jitter"].set_label(fmt(s.interval_jitter_ms, " ms", 2))
+        jit = fmt(s.interval_jitter_ms, " ms", 2)
+        if s.gap_percent is not None:
+            jit += f" · boşluk %{s.gap_percent:.1f}"
+        self.stat_rows["jitter"].set_label(jit)
         wake = fmt(s.wake_delay_ms, " ms", 1)
         if s.wake_delay_max_ms is not None:
             wake += f" (en çok {s.wake_delay_max_ms:.1f})"

@@ -205,3 +205,40 @@ def test_non_touchpad_is_ignored(tmp_path):
     sys_input, udev = _fake_sysfs(tmp_path)
     (udev / "c13:69").write_text("E:ID_INPUT=1\nE:ID_INPUT_MOUSE=1\n")
     assert device.list_touchpads(sys_input, udev) == []
+
+
+def test_jitter_ignores_reporting_gaps():
+    h, s = Hand(hz=143), stats.TouchStats()
+    frames = h.put((50, 30)) + h.move(10, 0, 0.3)
+    frames += [f for f in h.hold(0.1)][::10]            # firmware pauses while still
+    frames += h.move(10, 0, 0.3) + h.lift()
+    for f in frames:
+        s.feed(f)
+    out = s.summary()
+    assert out.rate_hz == pytest.approx(143, rel=0.02)
+    assert out.interval_jitter_ms < 0.1, "a few long gaps are not jitter"
+    assert 0 < out.gap_percent < 10
+
+
+@pytest.mark.parametrize("st,level", [
+    ({"wake_delay_max_ms": 0.8, "wake_samples": 105}, "ok"),
+    ({"wake_delay_max_ms": 12.6, "wake_samples": 17}, "warn"),
+    ({"wake_delay_max_ms": 0.8, "wake_samples": 2}, "info"),
+    ({}, "info"),
+])
+def test_i2c_sleep_check_follows_measurements(st, level):
+    from padforge import diagnostics
+    c = diagnostics.i2c_sleep_check(st, "x.sh")
+    assert c.level == level
+    assert (c.fix == "") == (level == "ok")
+
+
+def test_conflicts_only_count_session_processes(tmp_path):
+    import os
+    from padforge import diagnostics
+    for pid, comm in (("101", "touchegg"), ("102", "bash")):
+        (tmp_path / pid).mkdir()
+        (tmp_path / pid / "comm").write_text(comm + "\n")
+    me = os.getuid()
+    assert [n for n, _ in diagnostics.running_conflicts(tmp_path, me)] == ["Touchégg"]
+    assert diagnostics.running_conflicts(tmp_path, me + 12345) == [], "root daemon is not a conflict"

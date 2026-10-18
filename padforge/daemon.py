@@ -120,9 +120,16 @@ class Daemon:
 
     # ------------------------------------------------------------------ utils
     def error(self, msg: str) -> None:
+        """Record a warning once; repeats (every rescan) are not re-logged."""
+        if any(e.endswith(msg) for e in self.errors):
+            return
         log.warning(msg)
         self.errors.append(f"{time.strftime('%H:%M:%S')} {msg}")
         del self.errors[:-30]
+
+    def clear_errors(self, needle: str) -> None:
+        """Drop warnings that no longer apply (e.g. access granted, Touchégg closed)."""
+        self.errors = [e for e in self.errors if needle not in e]
 
     def event(self, msg: str) -> None:
         log.info(msg)
@@ -233,6 +240,8 @@ class Daemon:
         running = touchegg.client_running()
         if running != self.touchegg:
             self.touchegg = running
+            if not running:
+                self.clear_errors("Touchégg çalışıyor")
             self.event("Touchégg " + ("çalışıyor: PadForge hareketleri bekletildi" if running
                                       else "kapandı: PadForge hareketleri etkin"))
             self._update_engine_params()
@@ -273,6 +282,7 @@ class Daemon:
             return
         self.cfg = new
         self._reapply_times.clear()
+        self.clear_errors("sürekli değiştiriyor")
         self._update_engine_params()
         self._ensure_vpointer()
         self.apply_all()
@@ -334,6 +344,8 @@ class Daemon:
                 pad.error = err
                 if err:
                     self.error(err)
+                else:
+                    self.clear_errors(f"{node} okunamıyor")
                 if reader is not None:
                     pad.watch = GLib.io_add_watch(
                         reader.fd, GLib.PRIORITY_HIGH, GLib.IO_IN | GLib.IO_ERR | GLib.IO_HUP,
@@ -423,6 +435,8 @@ class Daemon:
         self._self_write_until = time.monotonic() + 0.3
 
     def _schedule_reapply(self, why: str) -> None:
+        if "apply" in self._timers:
+            return              # one pending apply covers every change in the burst
         now = time.monotonic()
         self._reapply_times = [t for t in self._reapply_times if now - t < 10]
         if len(self._reapply_times) >= MAX_REAPPLY_PER_10S:

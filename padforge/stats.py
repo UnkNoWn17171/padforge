@@ -24,9 +24,11 @@ class Summary:
     sessions: int = 0
     rate_hz: float | None = None          # from device timestamps (MSC_TIMESTAMP)
     kernel_rate_hz: float | None = None   # from kernel timestamps
-    interval_jitter_ms: float | None = None
+    interval_jitter_ms: float | None = None   # robust (MAD-based) spread of report intervals
+    gap_percent: float | None = None          # intervals longer than 1.5x the usual one
     wake_delay_ms: float | None = None    # median extra delay of the first report
     wake_delay_max_ms: float | None = None
+    wake_samples: int = 0
     read_latency_ms: float | None = None  # kernel timestamp -> our read()
     noise_mm: float | None = None         # position noise of a resting finger
     max_fingers: int = 0
@@ -139,15 +141,21 @@ class TouchStats:
     def summary(self, dropped: int = 0) -> Summary:
         s = Summary(frames=self.frames, sessions=self.sessions, max_fingers=self.max_fingers,
                     dropped=dropped)
+        # A pause in reporting (finger resting on some firmwares) is a gap, not jitter:
+        # use the median absolute deviation for spread and count gaps separately.
         if len(self.hw_dt) >= 8:
             med = statistics.median(self.hw_dt)
             s.rate_hz = 1e6 / med
-            s.interval_jitter_ms = statistics.pstdev(self.hw_dt) / 1000.0
+            s.interval_jitter_ms = _robust_sd(self.hw_dt, med) / 1000.0
+            s.gap_percent = 100.0 * sum(d > 1.5 * med for d in self.hw_dt) / len(self.hw_dt)
         if len(self.k_dt) >= 8:
-            s.kernel_rate_hz = 1.0 / statistics.median(self.k_dt)
+            kmed = statistics.median(self.k_dt)
+            s.kernel_rate_hz = 1.0 / kmed
             if s.interval_jitter_ms is None:
-                s.interval_jitter_ms = statistics.pstdev(self.k_dt) * 1000.0
+                s.interval_jitter_ms = _robust_sd(self.k_dt, kmed) * 1000.0
+                s.gap_percent = 100.0 * sum(d > 1.5 * kmed for d in self.k_dt) / len(self.k_dt)
         if self.wake:
+            s.wake_samples = len(self.wake)
             s.wake_delay_ms = statistics.median(self.wake) * 1000.0
             s.wake_delay_max_ms = max(self.wake) * 1000.0
         if self.latency:
@@ -157,6 +165,11 @@ class TouchStats:
         s.samples = {"intervals": len(self.hw_dt), "wake": len(self.wake),
                      "noise": len(self.noise)}
         return s
+
+
+def _robust_sd(values, median: float) -> float:
+    """Standard deviation estimate that ignores outliers (1.4826 x MAD)."""
+    return 1.4826 * statistics.median(abs(v - median) for v in values)
 
 
 def now() -> float:

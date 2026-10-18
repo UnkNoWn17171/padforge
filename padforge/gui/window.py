@@ -162,8 +162,12 @@ class MainWindow(Adw.ApplicationWindow):
             p.refresh()
 
     def apply_profile(self, name: str, title: str | None = None) -> None:
+        had_drag = self.cfg["gestures"]["three_finger_drag"]
         self.replace_config(config.apply_profile(self.cfg, name))
-        self.toast(f"{title or name} profili uygulandı")
+        note = ""
+        if self.cfg["gestures"]["three_finger_drag"] and not had_drag:
+            note = " · 3 parmak sürükleme açıldı, 3 parmak kaydırma hareketleri devre dışı"
+        self.toast(f"{title or name} profili uygulandı{note}")
 
     # -- daemon status ----------------------------------------------------------------------
     def poll_status(self) -> None:

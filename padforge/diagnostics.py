@@ -11,6 +11,9 @@ from . import config, device
 
 OK, INFO, WARN, ERROR = "ok", "info", "warn", "error"
 
+WAKE_OK_MS = 3.0            # first-report delay below this is not noticeable
+WAKE_SAMPLES_NEEDED = 5
+
 # /proc/<pid>/comm prefix -> (label, fix command)
 CONFLICTING = {
     "touchegg": ("Touchégg", "padforge disable-touchegg"),
@@ -60,14 +63,38 @@ def daemon_request(msg: dict, timeout: float = 0.6) -> dict | None:
         s.close()
 
 
-def running_conflicts() -> list[tuple[str, str]]:
+def i2c_sleep_check(stats: dict, script: str) -> Check:
+    """Decide from measurements whether the I2C controller's runtime sleep matters."""
+    wake_max, n = stats.get("wake_delay_max_ms"), stats.get("wake_samples", 0)
+    measured = isinstance(wake_max, (int, float))
+    if measured and n >= WAKE_SAMPLES_NEEDED and wake_max < WAKE_OK_MS:
+        return Check(OK, "I2C uykusu gecikme yaratmıyor",
+                     f"{n} dokunuşta ilk rapor en çok {wake_max:.1f} ms gecikti; "
+                     "uykuyu kapatmaya gerek yok.")
+    detail = ("Parmak dokunduğunda denetleyicinin uyanması ilk hareketi geciktirebilir."
+              + (f" Ölçülen en kötü ilk rapor gecikmesi: {wake_max:.1f} ms ({n} dokunuş)."
+                 if measured else " Henüz ölçülmedi: touchpad'i biraz kullanınca kesinleşir."))
+    level = WARN if measured and wake_max >= WAKE_OK_MS else INFO
+    return Check(level, "I2C denetleyicisi boşta uykuya geçiyor", detail,
+                 fix=f"sudo bash {script} --power-fix")
+
+
+def running_conflicts(proc: Path = Path("/proc"), uid: int | None = None) -> list[tuple[str, str]]:
+    """Gesture tools running in *this user's* session.
+
+    Their root daemons (e.g. ``touchegg --daemon``) do nothing without the session
+    client, so they are not a conflict.
+    """
+    uid = os.getuid() if uid is None else uid
     found: list[tuple[str, str]] = []
     try:
-        for pid in os.listdir("/proc"):
+        for pid in os.listdir(proc):
             if not pid.isdigit():
                 continue
             try:
-                comm = Path(f"/proc/{pid}/comm").read_text().strip()
+                if (proc / pid).stat().st_uid != uid:
+                    continue
+                comm = (proc / pid / "comm").read_text().strip()
             except OSError:
                 continue
             for key, entry in CONFLICTING.items():
@@ -123,17 +150,12 @@ def run_checks(status: dict | None = None, cfg: dict | None = None,
                                     f"IRQ {irq} ({device.irq_line(name)}), {count} kesme"))
             sleepy = [(p, st) for p, st, ctl in pad.power_parents() if ctl == "auto"]
             if sleepy:
-                wake = None
+                st = {}
                 if status:
                     for sp in status.get("pads", []):
                         if sp.get("node") == pad.node:
-                            wake = sp.get("stats", {}).get("wake_delay_ms")
-                measured = (f" Ölçülen ilk rapor gecikmesi: {wake:.1f} ms."
-                            if isinstance(wake, (int, float)) else "")
-                checks.append(Check(WARN, "I2C denetleyicisi boşta uykuya geçiyor",
-                                    "Parmak dokunduğunda denetleyicinin uyanması ilk hareketi "
-                                    "geciktirebilir (Windows sürücüsü bunu yapmaz)." + measured,
-                                    fix=f"sudo bash {script} --power-fix"))
+                            st = sp.get("stats", {})
+                checks.append(i2c_sleep_check(st, script))
             elif pad.power_parents():
                 checks.append(Check(OK, "I2C denetleyici uykusu kapalı", ""))
 
@@ -174,8 +196,12 @@ def run_checks(status: dict | None = None, cfg: dict | None = None,
             rate = st.get("rate_hz")
             if rate:
                 level = OK if rate >= 100 else WARN
-                jitter = st.get("interval_jitter_ms")
+                jitter, gaps = st.get("interval_jitter_ms"), st.get("gap_percent")
                 extra = f", sapma {jitter:.2f} ms" if jitter is not None else ""
+                if gaps is not None:
+                    extra += f", kaçan/geciken rapor %{gaps:.1f}"
+                    if gaps > 5:
+                        level = WARN
                 checks.append(Check(level, f"Rapor hızı {rate:.0f} Hz",
                                     f"{sp.get('name')}: ölçülen{extra}"))
             noise = st.get("noise_mm")
