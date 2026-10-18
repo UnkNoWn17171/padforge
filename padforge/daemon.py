@@ -27,7 +27,7 @@ from gi.repository import Gio, GLib  # noqa: E402
 
 from . import __version__, accel, config, device, gnome, kinetic, touchegg, vpointer  # noqa: E402
 from . import xinput as xi  # noqa: E402
-from .actions import CONTINUOUS, Executor  # noqa: E402
+from .actions import CONTINUOUS, VERTICAL_DOWN_IS_NEXT, Executor  # noqa: E402
 from .gestures import GestureEvent, GestureRecognizer  # noqa: E402
 from .stats import TouchStats  # noqa: E402
 from .tap import TapEngine, TapEvent  # noqa: E402
@@ -610,7 +610,10 @@ class Daemon:
 
     # --------------------------------------------------------------- gestures
     @staticmethod
-    def _inc_for(direction: str) -> int:
+    def _inc_for(direction: str, action: str = "") -> int:
+        """+1 = next/more. Up means more, except for switchers where down is next."""
+        if action in VERTICAL_DOWN_IS_NEXT and direction in ("up", "down"):
+            return 1 if direction == "down" else -1
         return 1 if direction in ("up", "right", "out") else -1
 
     def _gesture(self, g: GestureEvent) -> None:
@@ -625,10 +628,13 @@ class Daemon:
             self.event(f"hareket: {g.key} → {b['action']} (sürekli)")
             self._cont_key = g.key
             if not self.pause_clients:
-                self.executor.begin(b["action"], b.get("arg"), self._inc_for(g.direction))
+                self._cont_action = b["action"]
+                self.executor.begin(b["action"], b.get("arg"),
+                                    self._inc_for(g.direction, b["action"]))
         elif g.kind == "step":
             vertical = g.key.endswith(("_up", "_down"))
-            inc = -g.step if vertical else g.step
+            down_is_next = getattr(self, "_cont_action", "") in VERTICAL_DOWN_IS_NEXT
+            inc = -g.step if (vertical and not down_is_next) else g.step
             if not self.pause_clients:
                 self.executor.step(inc)
         elif g.kind == "end":

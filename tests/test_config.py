@@ -91,3 +91,18 @@ def test_deep_merge_does_not_mutate():
     b = {"x": {"y": 3}}
     out = config.deep_merge(a, b)
     assert out == {"x": {"y": 3, "z": 2}} and a == {"x": {"y": 1, "z": 2}}
+
+
+def test_windows_profile_restores_recommended_gestures():
+    cfg = config.defaults()
+    cfg["gestures"]["bindings"]["pinch3_in"] = {"action": "close_window"}
+    cfg["gestures"]["three_finger_drag"] = True
+    out = config.apply_profile(cfg, "windows")
+    assert out["gestures"]["bindings"] == config.RECOMMENDED_BINDINGS
+    assert out["gestures"]["three_finger_drag"] is False
+
+
+def test_recommended_layout_is_safe():
+    """Nothing destructive on a gesture that is easy to trigger by accident."""
+    actions = {b["action"] for b in config.RECOMMENDED_BINDINGS.values()}
+    assert "close_window" not in actions and "command" not in actions

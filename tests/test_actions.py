@@ -27,7 +27,8 @@ def test_parse_accelerator_errors(bad):
 
 
 def test_catalogue_consistency():
-    assert actions.CONTINUOUS == {"app_switch", "tab_switch", "zoom", "volume", "brightness"}
+    assert actions.CONTINUOUS == {"window_cycle", "app_switch", "tab_switch", "zoom", "volume",
+                                  "brightness"}
     for key in actions.KEY_ACTIONS:
         assert key in actions.ACTIONS
     for key in actions.GSETTINGS_KEYS:
@@ -95,3 +96,54 @@ def test_none_does_nothing():
     ex = make_exec()
     ex.run("none")
     assert ex.log == []
+
+
+# -- Super Scroll Switch window menu ----------------------------------------------------
+class KeyRecorder(Executor):
+    """Executor whose key presses are recorded instead of sent to X."""
+
+    def __init__(self, steps_ok=True):
+        self.calls = []
+        super().__init__(FakeDisplay(), dry_run=False,
+                         shortcut_lookup=lambda a: {"app_switch": "<Super>Tab"}.get(a),
+                         window_step=self._step)
+        self.steps_ok = steps_ok
+        self.d.sync = lambda: None
+
+    def _step(self, direction):
+        self.calls.append(("step", direction))
+        return self.steps_ok
+
+    def _keycode(self, name):
+        return {"Super_L": 133, "Tab": 23, "Shift_L": 50}[name], False
+
+    def _key(self, code, down):
+        self.calls.append(("key", code, down))
+
+
+def test_window_cycle_holds_super_and_steps():
+    ex = KeyRecorder()
+    ex.begin("window_cycle", None, +1)
+    ex.step(+1)
+    ex.step(-1)
+    ex.end()
+    assert ex.calls == [("key", 133, True), ("step", 1), ("step", 1), ("step", -1),
+                        ("key", 133, False)]
+
+
+def test_window_cycle_falls_back_to_gnome_switcher_without_extension():
+    ex = KeyRecorder(steps_ok=False)
+    ex.begin("window_cycle", None, +1)
+    ex.end()
+    keys = [c for c in ex.calls if c[0] == "key"]
+    assert keys[:2] == [("key", 133, True), ("key", 133, False)], "Super released first"
+    assert ("key", 23, True) in keys, "then GNOME's Super+Tab switcher"
+    assert keys[-1] == ("key", 133, False), "and nothing stays held"
+
+
+def test_vertical_direction_for_switchers():
+    from padforge.daemon import Daemon
+    assert Daemon._inc_for("down", "window_cycle") == 1
+    assert Daemon._inc_for("up", "window_cycle") == -1
+    assert Daemon._inc_for("right", "window_cycle") == 1
+    assert Daemon._inc_for("up", "volume") == 1, "up is still louder"

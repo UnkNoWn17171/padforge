@@ -31,6 +31,8 @@ ACTIONS: dict[str, ActionInfo] = {
     "show_desktop": ActionInfo("Masaüstünü göster / geri getir", "Masaüstü"),
     "workspace_next": ActionInfo("Sonraki çalışma alanı", "Masaüstü"),
     "workspace_prev": ActionInfo("Önceki çalışma alanı", "Masaüstü"),
+    "window_cycle": ActionInfo("Pencere değiştir (Super+tekerlek menüsü)", "Pencere",
+                               continuous=True),
     "app_switch": ActionInfo("Uygulama değiştir (kaydırdıkça ilerler)", "Pencere", continuous=True),
     "window_switch": ActionInfo("Sonraki uygulama (tek adım)", "Pencere"),
     "minimize": ActionInfo("Pencereyi küçült", "Pencere"),
@@ -62,6 +64,31 @@ ACTIONS: dict[str, ActionInfo] = {
 }
 
 CONTINUOUS = {k for k, v in ACTIONS.items() if v.continuous}
+
+# For these, moving the fingers *down* means "next" (like turning a mouse wheel down);
+# for the others up means more/next (volume, brightness, zoom).
+VERTICAL_DOWN_IS_NEXT = {"window_cycle", "app_switch", "tab_switch"}
+
+# The user's own GNOME extension "Super Scroll Switch": Super held + Step(+1/-1)
+# shows its in-place window switcher; releasing Super activates the chosen window.
+SSS_DEST = "org.gnome.Shell"
+SSS_PATH = "/org/gnome/Shell/Extensions/SuperScrollSwitch"
+SSS_IFACE = "org.gnome.Shell.Extensions.SuperScrollSwitch"
+_bus = None
+
+
+def super_scroll_step(direction: int) -> bool:
+    """One step of the Super Scroll Switch menu; False if the extension is missing."""
+    global _bus
+    try:
+        from gi.repository import Gio, GLib
+        if _bus is None:
+            _bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        _bus.call_sync(SSS_DEST, SSS_PATH, SSS_IFACE, "Step", GLib.Variant("(i)", (direction,)),
+                       None, Gio.DBusCallFlags.NO_AUTO_START, 500, None)
+        return True
+    except Exception:
+        return False
 
 # Fallback shortcuts when a gsettings key is missing or empty.
 GSETTINGS_KEYS: dict[str, tuple[str, str, str]] = {
@@ -188,7 +215,8 @@ class Executor:
     """Runs actions against an X display (python-xlib Display)."""
 
     def __init__(self, display, pointer=None, dry_run: bool = False,
-                 shortcut_lookup: Callable[[str], str | None] = shortcut_for):
+                 shortcut_lookup: Callable[[str], str | None] = shortcut_for,
+                 window_step: Callable[[int], bool] = super_scroll_step):
         from Xlib import X, XK
         from Xlib.ext import xtest
         self.X, self.XK, self.xtest = X, XK, xtest
@@ -198,6 +226,7 @@ class Executor:
         self.pointer = pointer           # VirtualPointer or None
         self.dry_run = dry_run
         self.shortcut_lookup = shortcut_lookup
+        self.window_step = window_step
         self.log: list[str] = []         # recent actions (dry-run and GUI)
         self._held: list[int] = []       # keycodes held by a continuous action
         self._cont: str | None = None
@@ -407,6 +436,22 @@ class Executor:
         try:
             self.end()
             self._cont = action
+            if action == "window_cycle":
+                self._record("pencere menüsü açıldı (Super+tekerlek)")
+                if not self.dry_run:
+                    self._held = [self._keycode("Super_L")[0]]
+                    self._key(self._held[0], True)
+                    self.d.sync()
+                    if not self.window_step(1 if inc > 0 else -1):
+                        # Extension not installed: fall back to GNOME's own switcher.
+                        self._key(self._held[0], False)
+                        self.d.sync()
+                        self._held, self._cont = [], None
+                        self._record("Super Scroll Switch yok, GNOME değiştiricisi kullanılıyor")
+                        return self.begin("app_switch", arg, inc)
+                else:
+                    self._record("pencere " + ("sonraki" if inc > 0 else "önceki"))
+                return
             if action == "app_switch":
                 accel = self.shortcut_lookup("app_switch") or "<Alt>Tab"
                 mods, key = parse_accelerator(accel)
@@ -427,6 +472,11 @@ class Executor:
         if action is None:
             return
         try:
+            if action == "window_cycle":
+                self._record("pencere " + ("sonraki" if inc > 0 else "önceki"))
+                if not self.dry_run:
+                    self.window_step(1 if inc > 0 else -1)
+                return
             if action == "app_switch":
                 self._record("uygulama " + ("ileri" if inc > 0 else "geri"))
                 if self.dry_run:
@@ -455,7 +505,7 @@ class Executor:
         if self._cont is None:
             return
         if self._held:
-            self._record("uygulama seçildi")
+            self._record("seçilen pencere açıldı")
             if not self.dry_run:
                 for c in reversed(self._held):
                     self._key(c, False)

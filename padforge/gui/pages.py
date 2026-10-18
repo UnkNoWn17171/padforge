@@ -181,8 +181,8 @@ class OverviewPage(Page):
                           "Birini seç, sonra istediğini değiştir. Her değişiklik anında uygulanır.")
         box = Gtk.Box(spacing=12, homogeneous=True, margin_top=4)
         for name, title, desc in (
-                ("windows", "WINDOWS+", "Hızlı ve isabetli. Dokununca anında tıklar, "
-                                       "sayfa süzülerek kayar."),
+                ("windows", "WINDOWS+", "Önerilen. Windows'taki gibi hızlı ve isabetli; "
+                                       "3 parmak pencere, 4 parmak çalışma alanı değiştirir."),
                 ("macos", "MACOS", "Yavaşta çok hassas. Üç parmakla sürükleme, "
                                    "iki parmakla basınca sağ tık."),
                 ("linux", "SADE", "Sistemin kendi ayarı. Hareketler ve süzülme kapalı.")):
@@ -450,11 +450,12 @@ class ScrollPage(Page):
 
 # ============================================================================ gestures
 GESTURE_LABELS = {
-    "swipe3_up": "Yukarı kaydır", "swipe3_down": "Aşağı kaydır", "swipe3_left": "Sola kaydır",
-    "swipe3_right": "Sağa kaydır", "swipe4_up": "Yukarı kaydır", "swipe4_down": "Aşağı kaydır",
-    "swipe4_left": "Sola kaydır", "swipe4_right": "Sağa kaydır",
-    "pinch3_in": "3 parmak içe sıkıştır", "pinch3_out": "3 parmak dışa aç",
-    "pinch4_in": "4 parmak içe sıkıştır", "pinch4_out": "4 parmak dışa aç",
+    "swipe3_up": "↑  Yukarı kaydır", "swipe3_down": "↓  Aşağı kaydır",
+    "swipe3_left": "←  Sola kaydır", "swipe3_right": "→  Sağa kaydır",
+    "swipe4_up": "↑  Yukarı kaydır", "swipe4_down": "↓  Aşağı kaydır",
+    "swipe4_left": "←  Sola kaydır", "swipe4_right": "→  Sağa kaydır",
+    "pinch3_in": "3 parmakla içe sıkıştır", "pinch3_out": "3 parmakla dışa aç",
+    "pinch4_in": "4 parmakla içe sıkıştır", "pinch4_out": "4 parmakla dışa aç",
     "tap4": "4 parmakla dokun",
 }
 ACTION_IDS = list(ACTIONS)
@@ -463,7 +464,8 @@ SHORTCUT_HINT = "Kısayol (ör. <Super>Page_Down veya Ctrl+Alt+T)"
 
 class GesturesPage(Page):
     id, title, icon = "gestures", "Hareketler", "padforge-gesture-symbolic"
-    intro = "3 ve 4 parmakla kaydır ya da sıkıştır; her harekete bir iş ata. ▶ ile dene."
+    intro = ("Kolay hatırla: 3 parmak pencere değiştirir, 4 parmak çalışma alanı değiştirir. "
+             "Her satırın sağındaki ▶ hareketi yapmadan işini gösterir.")
 
     def build(self):
         page = self.new_page()
@@ -474,7 +476,7 @@ class GesturesPage(Page):
                                       "Pencereyi ya da yazıyı 3 parmakla tutup taşı. "
                                       "Açıkken 3 parmak kaydırma hareketleri çalışmaz.")
         self.switch(g, "2 parmakla yakınlaştır", "gestures.pinch_zoom_2f",
-                    "İki parmağı açıp kapatınca tarayıcıda ve belgelerde yakınlaştırır")
+                    "İki parmağını açınca büyütür, kapatınca küçültür (tarayıcı, belge, resim)")
         fine = Adw.ExpanderRow(title="Hassasiyet", subtitle="Hareketin ne kadar kolay tanınacağı")
         g.add(fine)
         self.spin(fine, "Kaydırma mesafesi (mm)", "gestures.swipe_threshold_mm", 3, 60, 0.5, 1,
@@ -486,20 +488,46 @@ class GesturesPage(Page):
                     formatter=lambda v: f"%{v * 100:.0f}")
 
         self.binding_rows: dict[str, tuple] = {}
-        groups = [("3 parmak", ["swipe3_up", "swipe3_down", "swipe3_left", "swipe3_right"]),
-                  ("4 parmak", ["swipe4_up", "swipe4_down", "swipe4_left", "swipe4_right"]),
-                  ("Sıkıştırma", ["pinch3_in", "pinch3_out", "pinch4_in", "pinch4_out"]),
-                  ("Dokunma", ["tap4"])]
-        for title, keys in groups:
-            grp = self.group(page, title)
-            if title == "3 parmak":
+        groups = [
+            ("3 parmak · pencere değiştir",
+             "Üç parmağını koy ve kaydır: pencere menüsü açılır, kaydırdıkça pencereler arasında "
+             "gezersin, parmaklarını kaldırınca seçtiğin pencere öne gelir.",
+             ["swipe3_up", "swipe3_down", "swipe3_left", "swipe3_right"]),
+            ("4 parmak · çalışma alanı değiştir",
+             "Çalışma alanı = ayrı masaüstü sayfası. Dört parmakla sağa/sola kaydırınca "
+             "sayfa değişir; yukarı hepsini gösterir, aşağı masaüstünü açar.",
+             ["swipe4_up", "swipe4_down", "swipe4_left", "swipe4_right"]),
+            ("Sıkıştırma",
+             "Parmaklarını birbirine yaklaştır (içe) ya da birbirinden uzaklaştır (dışa); "
+             "telefonda resmi küçültür/büyütür gibi.",
+             ["pinch4_in", "pinch4_out", "pinch3_in", "pinch3_out"]),
+            ("Dokunma",
+             "1 parmak: tık · 2 parmak: sağ tık · 3 parmak: orta tık (bağlantıyı yeni sekmede "
+             "açar). 4 parmak dokunuşa bir iş ata:",
+             ["tap4"]),
+        ]
+        for title, desc, keys in groups:
+            grp = self.group(page, title, desc)
+            if keys[0] == "swipe3_up":
                 self.three_group = grp
-                if touchegg.USER_CONF.exists():
-                    grp.set_header_suffix(self.button("Touchégg'den aktar", self.win.import_touchegg,
-                                                      "flat"))
+                grp.set_header_suffix(self.button("Önerilene döndür", self._recommended, "flat"))
             for key in keys:
                 self._binding_row(grp, key)
+        if touchegg.USER_CONF.exists():
+            extra = self.group(page, "Başka programdan")
+            row = Adw.ActionRow(title="Touchégg hareketlerini aktar",
+                                subtitle="Daha önce Touchégg'de kurduğun hareketleri buraya taşır")
+            row.add_suffix(self.button("Aktar", self.win.import_touchegg, "flat"))
+            extra.add(row)
         return page
+
+    def _recommended(self):
+        from .. import config as cfgmod
+        import copy
+        self.win.set("gestures.bindings", copy.deepcopy(cfgmod.RECOMMENDED_BINDINGS))
+        self.win.set("gestures.three_finger_drag", False)
+        self.refresh()
+        self.win.toast("Önerilen hareketler geri yüklendi")
 
     def _binding_row(self, grp, key):
         labels = [ACTIONS[a].label + ("  ⟳" if ACTIONS[a].continuous else "") for a in ACTION_IDS]

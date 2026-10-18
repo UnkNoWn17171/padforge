@@ -20,6 +20,28 @@ GESTURE_KEYS = [
     f"swipe{n}_{d}" for n in (3, 4) for d in ("up", "down", "left", "right")
 ] + [f"pinch{n}_{d}" for n in (3, 4) for d in ("in", "out")] + ["tap4"]
 
+# The recommended layout, as simple as possible:
+#   3 fingers, any direction = window switcher (the user's Super+wheel menu);
+#     keep moving to step through windows, lift to open the chosen one
+#   4 fingers left/right = switch workspace, up = see everything, down = desktop
+#   2-finger pinch = zoom; no 3/4-finger pinches, no 4-finger tap
+# Nothing destructive (no "close window") sits on an easily triggered gesture.
+RECOMMENDED_BINDINGS: dict[str, dict] = {
+    "swipe3_up": {"action": "window_cycle"},
+    "swipe3_down": {"action": "window_cycle"},
+    "swipe3_left": {"action": "window_cycle"},
+    "swipe3_right": {"action": "window_cycle"},
+    "swipe4_up": {"action": "overview"},
+    "swipe4_down": {"action": "show_desktop"},
+    "swipe4_left": {"action": "workspace_next"},
+    "swipe4_right": {"action": "workspace_prev"},
+    "pinch3_in": {"action": "none"},
+    "pinch3_out": {"action": "none"},
+    "pinch4_in": {"action": "none"},
+    "pinch4_out": {"action": "none"},
+    "tap4": {"action": "none"},
+}
+
 DEFAULTS: dict[str, Any] = {
     "version": CONFIG_VERSION,
     "device": {
@@ -77,24 +99,12 @@ DEFAULTS: dict[str, Any] = {
         "pinch_threshold": 0.22,     # relative spread change
         "step_mm": 16.0,             # distance per step for continuous actions
         "three_finger_drag": False,  # macOS-style; replaces 3-finger swipes
-        "pinch_zoom_2f": False,      # 2-finger pinch -> Ctrl+wheel zoom
-        "bindings": {
-            "swipe3_up": {"action": "overview"},
-            "swipe3_down": {"action": "show_desktop"},
-            "swipe3_left": {"action": "app_switch"},
-            "swipe3_right": {"action": "app_switch"},
-            "swipe4_up": {"action": "app_grid"},
-            "swipe4_down": {"action": "minimize"},
-            "swipe4_left": {"action": "workspace_next"},
-            "swipe4_right": {"action": "workspace_prev"},
-            "pinch3_in": {"action": "none"},
-            "pinch3_out": {"action": "none"},
-            "pinch4_in": {"action": "overview"},
-            "pinch4_out": {"action": "show_desktop"},
-            "tap4": {"action": "play_pause"},
-        },
+        "pinch_zoom_2f": True,       # 2-finger pinch -> Ctrl+wheel zoom
+        "bindings": None,          # filled with RECOMMENDED_BINDINGS below
     },
 }
+
+DEFAULTS["gestures"]["bindings"] = copy.deepcopy(RECOMMENDED_BINDINGS)
 
 # Numeric limits: dotted path -> (min, max)
 LIMITS: dict[str, tuple[float, float]] = {
@@ -128,13 +138,18 @@ CHOICES: dict[str, tuple[str, ...]] = {
 # One-click starting points. Each is a partial document merged over the
 # current config.
 PROFILES: dict[str, dict[str, Any]] = {
+    # Recommended: Windows-like feel plus the layout above.
     "windows": {
         "pointer": {"profile": "custom", "curve": {"preset": "windows", "scale": 1.0}},
-        "tap": {"engine": "padforge", "enabled": True, "drag": True, "button_map": "lrm"},
-        "click": {"method": "buttonareas"},
-        "scroll": {"method": "twofinger", "speed": 1.0, "acceleration": 0.0,
-                   "kinetic": {"enabled": True, "friction": 2.6}},
-        "gestures": {"enabled": True, "three_finger_drag": False},
+        "tap": {"engine": "padforge", "enabled": True, "drag": True, "drag_lock": False,
+                "button_map": "lrm"},
+        "click": {"method": "buttonareas", "middle_emulation": False},
+        "scroll": {"method": "twofinger", "natural": True, "speed": 1.0, "acceleration": 0.3,
+                   "horizontal": True,
+                   "kinetic": {"enabled": True, "friction": 2.6, "gain": 1.0}},
+        "gestures": {"enabled": True, "three_finger_drag": False, "pinch_zoom_2f": True,
+                     "swipe_threshold_mm": 8.0, "step_mm": 16.0,
+                     "bindings": copy.deepcopy(RECOMMENDED_BINDINGS)},
     },
     "macos": {
         "pointer": {"profile": "custom", "curve": {"preset": "macos", "scale": 1.0}},
