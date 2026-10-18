@@ -218,3 +218,19 @@ def test_from_config():
     assert eng.fingers == {1, 2, 3, 4} and eng.drag
     eng = TapEngine.from_config(c["tap"], False, padforge_engine=False)
     assert eng.fingers == {4} and not eng.drag
+
+
+def test_resting_thumb_does_not_turn_a_tap_into_a_right_click():
+    """Thumb parked in the corner the whole time; the index finger taps twice."""
+    h, eng = Hand(), TapEngine(drag=False)
+    ev = feed_all(eng, h.put((3, 66), edge=True) + h.hold(0.5))
+    for _ in range(2):
+        ev += feed_all(eng, h.put((60, 30)) + h.hold(0.05) + h.lift([1]))
+        h.idle(0.3)
+    assert kinds(ev) == [("click", LEFT), ("click", LEFT)]
+
+
+def test_thumb_tapping_alone_in_the_corner_clicks():
+    h, eng = Hand(), TapEngine()
+    ev = feed_all(eng, h.put((3, 66), edge=True) + h.hold(0.05) + h.lift())
+    assert kinds(ev) == [("click", LEFT)]

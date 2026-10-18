@@ -25,6 +25,13 @@ ABS_MT_TRACKING_ID = 0x39
 ABS_MT_PRESSURE = 0x3A
 MT_TOOL_FINGER, MT_TOOL_PALM = 0, 2
 
+# A finger that lands this close to the side or bottom edge and stays put is a
+# resting thumb (recorded 2026-10-18: a thumb parked at x=3 mm for 1.6 s while
+# the other hand moved the pointer). It is ignored while other fingers are down.
+EDGE_SIDE_MM = 7.0
+EDGE_BOTTOM_MM = 10.0
+RESTING_MOVE_MM = 3.0
+
 TOOL_COUNTS = {
     BTN_TOOL_FINGER: 1, BTN_TOOL_DOUBLETAP: 2, BTN_TOOL_TRIPLETAP: 3,
     BTN_TOOL_QUADTAP: 4, BTN_TOOL_QUINTTAP: 5,
@@ -57,9 +64,15 @@ class Touch:
     palm: bool = False
     pressure: int | None = None
     major: int | None = None
+    edge: bool = False      # landed in the side/bottom edge zone
+    parked: bool = False    # resting edge thumb seen next to real fingers: ignored
 
     def moved(self) -> float:
         return ((self.x - self.x0) ** 2 + (self.y - self.y0) ** 2) ** 0.5
+
+    @property
+    def resting(self) -> bool:
+        return self.edge and self.moved() < RESTING_MOVE_MM
 
 
 @dataclass
@@ -76,7 +89,8 @@ class Frame:
 
     @property
     def fingers(self) -> list[Touch]:
-        return [t for t in self.touches.values() if not t.palm]
+        """Touches that count: no palms, no parked (resting edge) thumbs."""
+        return [t for t in self.touches.values() if not t.palm and not t.parked]
 
     @property
     def count(self) -> int:
@@ -85,6 +99,34 @@ class Frame:
         if self.tool_count > len(self.touches):   # more fingers than tracked slots
             n += self.tool_count - len(self.touches)
         return n
+
+
+def in_edge_zone(x: float, y: float, width: float, height: float) -> bool:
+    """Bottom strip, or the lower half of the side edges: where thumbs rest.
+
+    Upper side edges are excluded on purpose: in recorded 4-finger taps the
+    little finger landed at x = 116 of 118.5 mm, near the top.
+    """
+    if y > height - EDGE_BOTTOM_MM:
+        return True
+    side = x < EDGE_SIDE_MM or x > width - EDGE_SIDE_MM
+    return side and y > height / 2
+
+
+def park_resting(touches) -> None:
+    """Park resting edge touches while a real finger is down; unpark once they move.
+
+    Sticky on purpose: when the other finger lifts, the parked thumb must not
+    suddenly count as a finger (that kept taps from ever finishing).
+    """
+    live = [t for t in touches if not t.palm]
+    if any(not t.resting for t in live):
+        for t in live:
+            if t.resting:
+                t.parked = True
+    for t in live:
+        if t.parked and t.moved() >= RESTING_MOVE_MM:
+            t.parked = False
 
 
 @dataclass
@@ -186,7 +228,8 @@ class MTParser:
                 if t is not None:          # id changed without -1 in between
                     ended.append(i)
                     ended_touches.append(t)
-                t = Touch(i, s.tracking_id, x, y, ts, x0=x, y0=y)
+                edge = in_edge_zone(x, y, self.ax.size_mm, self.ay.size_mm)
+                t = Touch(i, s.tracking_id, x, y, ts, x0=x, y0=y, edge=edge)
                 self.touches[i] = t
                 began.append(i)
             else:
@@ -194,6 +237,7 @@ class MTParser:
             t.palm = t.palm or s.tool == MT_TOOL_PALM   # once a palm, always a palm
             t.pressure, t.major = s.pressure, s.major
             s.dirty = False
+        park_resting(self.touches.values())
         tool_count = 0
         for code, n in TOOL_COUNTS.items():
             if self.keys.get(code):

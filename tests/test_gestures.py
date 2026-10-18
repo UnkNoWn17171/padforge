@@ -153,3 +153,32 @@ def test_from_config():
     from padforge import config
     r = GestureRecognizer.from_config(config.defaults()["gestures"], {"swipe3_left"})
     assert r.swipe_threshold == 8.0 and "swipe3_left" in r.continuous_keys
+
+
+# -- thumb-anchored pinches and resting thumbs (recorded habits, 2026-10-18) ----------
+HAND = [(40, 22), (58, 17), (78, 22), (60, 55)]      # three fingers + thumb below
+
+
+@pytest.mark.parametrize("factor,direction", [(0.45, "in"), (-0.45, "out")])
+def test_thumb_anchored_pinch_is_a_pinch_not_a_swipe(factor, direction):
+    """Three fingers move to/away from a still thumb: the centroid moves ~10 mm too."""
+    h, r = Hand(), GestureRecognizer()
+    frames = h.put(*HAND) + h.converge(HAND[3], factor, 0.3, slots=[0, 1, 2]) + h.lift()
+    assert kinds(feed_all(r, frames)) == [("pinch", f"pinch4_{direction}")]
+
+
+@pytest.mark.parametrize("dx,dy,direction", [(0, -18, "up"), (0, 18, "down"), (-20, 0, "left")])
+def test_swipe_with_hand_drift_stays_a_swipe(dx, dy, direction):
+    """Recorded swipes change finger spread by up to 18 %; that is not a pinch."""
+    h, r = Hand(), GestureRecognizer()
+    frames = h.put(*HAND) + h.move(dx, dy, 0.18)
+    frames += h.spread(1.18, 0.05)
+    ev = feed_all(r, frames + h.lift())
+    assert kinds(ev) == [("swipe", f"swipe4_{direction}")]
+
+
+def test_resting_thumb_does_not_turn_three_fingers_into_four():
+    h, r = Hand(), GestureRecognizer()
+    frames = h.put((3, 66), edge=True) + h.put((40, 25), (55, 22), (70, 25))
+    frames += h.move(0, -15, 0.15, slots=[1, 2, 3]) + h.lift()
+    assert kinds(feed_all(r, frames)) == [("swipe", "swipe3_up")]

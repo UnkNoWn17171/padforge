@@ -14,7 +14,15 @@ from dataclasses import dataclass, field
 from .mt import Frame
 
 SETTLE_S = 0.15          # time allowed for the remaining fingers to land
-PINCH_MIN_MM = 5.0       # minimum absolute spread change for a pinch
+PINCH_MIN_MM = 5.0       # minimum absolute spread change for a pinch (2-finger zoom, drag)
+# 3/4-finger pinch vs swipe. A pinch with the thumb held still also moves the
+# centroid (the other fingers travel towards the thumb), so the old
+# "spread change vs centroid travel" test read it as a swipe. Use the
+# translation-free least-squares scale instead: its radial motion
+# |ln s| * r_rms (mm) compared with the centroid travel. Recorded swipes
+# (25 of them, 2026-10-18) never exceeded |s-1| = 0.18 or radial/travel = 0.17.
+PINCH_RADIAL_MM = 3.5    # radial motion needed for a pinch
+PINCH_DOMINANCE = 0.35   # radial / travel above this: pinch-like, never a swipe
 DRAG_START_MM = 0.8      # 3-finger drag starts after this much centroid travel
 ZOOM_STEP = 0.12         # relative spread change per zoom step (2-finger pinch)
 
@@ -47,6 +55,21 @@ def _centroid(points):
 def _spread(points):
     cx, cy = _centroid(points)
     return sum(math.hypot(x - cx, y - cy) for x, y in points) / len(points)
+
+
+def ls_scale(a, b) -> tuple[float, float]:
+    """Least-squares scale from point set ``a`` to ``b`` (translation removed).
+
+    Returns (scale, rms radius of ``a`` in mm).
+    """
+    (cax, cay), (cbx, cby) = _centroid(a), _centroid(b)
+    num = den = 0.0
+    for (ax, ay), (bx, by) in zip(a, b):
+        num += (bx - cbx) * (ax - cax) + (by - cby) * (ay - cay)
+        den += (ax - cax) ** 2 + (ay - cay) ** 2
+    if den <= 1e-9:
+        return 1.0, 0.0
+    return num / den, math.sqrt(den / len(a))
 
 
 @dataclass
@@ -212,9 +235,12 @@ class GestureRecognizer:
                                      time=f.time)]
             return []
 
-        pinch_needed = max(PINCH_MIN_MM, self.pinch_threshold * s0)
-        if abs(ds) >= pinch_needed and abs(ds) > 0.6 * dist:
-            direction = "out" if ds > 0 else "in"
+        scale, r0 = ls_scale(a, b)
+        radial = abs(math.log(max(scale, 1e-3))) * r0
+        pinch_like = radial >= PINCH_DOMINANCE * dist
+        if (pinch_like and radial >= PINCH_RADIAL_MM
+                and abs(scale - 1.0) >= 0.8 * self.pinch_threshold):
+            direction = "out" if scale > 1.0 else "in"
             key = f"pinch{tr.n}_{direction}"
             if key in self.continuous_keys:
                 self.state = self.CONTINUOUS
@@ -223,7 +249,7 @@ class GestureRecognizer:
             self.state, self.track = self.WAIT_LIFT, None
             return [GestureEvent("pinch", tr.n, direction, time=f.time)]
 
-        if dist >= self.swipe_threshold:
+        if dist >= self.swipe_threshold and not pinch_like:
             if abs(dx) >= abs(dy):
                 direction, axis = ("right" if dx > 0 else "left"), "x"
             else:

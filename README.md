@@ -124,7 +124,7 @@ padforge import-touchegg [--disable]   ·   padforge disable-touchegg / enable-t
 ## Testler
 
 ```bash
-python3 -m pytest tests                                       # 172 birim testi
+python3 -m pytest tests                                       # 189 birim testi
 PADFORGE_INTEGRATION=1 python3 -m pytest tests/integration    # 10 test: gerçek Xorg + libinput
 PADFORGE_GUI_DISPLAY=:7 python3 -m pytest tests/integration   # 6 arayüz testi (ör. Xephyr :7)
 padforge selftest

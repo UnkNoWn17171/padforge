@@ -43,6 +43,10 @@ class _Session:
     typing: bool = False
     coasting: bool = False
     palm_only: bool = True
+    ids: set = None
+
+    def __post_init__(self):
+        self.ids = set()
 
 
 class TapEngine:
@@ -149,6 +153,15 @@ class TapEngine:
         count = f.count
         now = f.time
 
+        active = {t.tracking_id for t in f.fingers}
+        if self.session is not None and active and self.session.ids \
+                and not (active & self.session.ids):
+            # The earlier fingers vanished without lifting (a thumb got parked):
+            # drop that sequence, no tap, and start fresh with the new fingers.
+            self.session = None
+            if self.state == self.DECIDE:
+                self.state = self.IDLE
+
         if self.session is None:
             if count == 0:
                 return out
@@ -172,6 +185,7 @@ class TapEngine:
                 self.state = self.DRAGGING           # continue the locked drag
 
         s = self.session
+        s.ids |= active
         for t in f.fingers:
             o = self._origin.setdefault(t.tracking_id, (t.x, t.y))
             s.max_move = max(s.max_move, ((t.x - o[0]) ** 2 + (t.y - o[1]) ** 2) ** 0.5)
