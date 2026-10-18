@@ -6,6 +6,8 @@ def bare():
     from padforge.boost import Boost
     d = daemon.Daemon.__new__(daemon.Daemon)
     d.boost = Boost(call=lambda *a: 1)
+    from padforge.wmdrag import SuperDrag
+    d.wmdrag = SuperDrag()
     d.errors = []
     d.events = []
     d._timers = {}

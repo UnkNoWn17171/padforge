@@ -50,7 +50,7 @@ class _Session:
 
 
 class TapEngine:
-    IDLE, PENDING, DECIDE, DRAGGING, LOCKED = range(5)
+    IDLE, PENDING, DECIDE, DRAGGING, LOCKED, TITLE = range(6)
 
     def __init__(self, button_map: str = "lrm", drag: bool = True, drag_lock: bool = False,
                  max_duration: float = 0.18, max_move_mm: float = 1.5,
@@ -77,6 +77,11 @@ class TapEngine:
         self.held: TapEvent | None = None      # multi-finger tap waiting for confirmation
         self.held_until = 0.0
         self.held_attached = False
+        # Returns True when the pointer is on a window title bar. There a tap keeps
+        # the button down for drag_window so a second touch drags the *same* press
+        # (moves the window) instead of making a double click (which maximises).
+        self.title_probe = None
+        self.title_origin = False
 
     @classmethod
     def from_config(cls, tcfg: dict, left_handed: bool, padforge_engine: bool) -> "TapEngine":
@@ -115,7 +120,7 @@ class TapEngine:
         return self._state_deadline()
 
     def _state_deadline(self) -> float | None:
-        if self.state == self.PENDING:
+        if self.state in (self.PENDING, self.TITLE):
             return self.pending_until
         if self.state == self.DECIDE:
             return self.decide_until
@@ -133,6 +138,8 @@ class TapEngine:
             out += self._release_held()
         if self.state == self.PENDING and now >= self.pending_until:
             self.state = self.IDLE
+        elif self.state == self.TITLE and now >= self.pending_until and self.session is None:
+            out += self._release(now)              # single tap on a title bar: click done
         elif self.state == self.DECIDE and now >= self.decide_until:
             out += self._press(now)
         elif self.state == self.LOCKED and now >= self.lock_until and self.session is None:
@@ -143,6 +150,7 @@ class TapEngine:
         """Abort everything (device lost, engine disabled)."""
         out = self._release(now) if self.pressed else []
         self.state, self.session = self.IDLE, None
+        self.title_origin = False
         self.held, self.held_attached = None, False
         return out
 
@@ -176,7 +184,13 @@ class TapEngine:
                         and 0 <= now - last_key_time < self.typing_guard)
             self.session = s
             self._origin = {t.tracking_id: (t.x, t.y) for t in f.fingers}
-            if self.state == self.PENDING and now <= self.pending_until and count == 1:
+            if self.state == self.TITLE:
+                if now <= self.pending_until and count == 1:
+                    self.state = self.DRAGGING       # same press continues: window drag
+                    self.title_origin = True
+                else:
+                    out += self._release(now)
+            elif self.state == self.PENDING and now <= self.pending_until and count == 1:
                 self.state = self.DECIDE
                 self.decide_until = now + DRAG_DECIDE_S
             elif self.state == self.PENDING:
@@ -237,9 +251,14 @@ class TapEngine:
             return out
 
         if self.state == self.DRAGGING:
+            title_origin, self.title_origin = self.title_origin, False
             if self.drag_lock and not tap:
                 self.state = self.LOCKED
                 self.lock_until = now + self.drag_lock_time
+            elif title_origin and tap:
+                # Quick second tap on a title bar: a real double click (maximise).
+                out += self._release(now)
+                out.append(TapEvent("click", self.drag_button, 1, now))
             else:
                 out += self._release(now)
                 if tap:
@@ -249,6 +268,11 @@ class TapEngine:
         if tap and s.max_fingers in self.fingers:
             n = min(4, s.max_fingers)
             if n == 1:
+                if self.drag and self.title_probe is not None and self._on_title():
+                    out += self._press(now)
+                    self.state = self.TITLE
+                    self.pending_until = now + self.drag_window
+                    return out
                 out.append(TapEvent("click", self.button_for(1), 1, now))
                 self._arm_pending(now)
             else:
@@ -257,6 +281,12 @@ class TapEngine:
                 out += self._release_held()        # an earlier multi-tap is now certain
                 self.held, self.held_until, self.held_attached = ev, now + MULTI_CONFIRM_S, False
         return out
+
+    def _on_title(self) -> bool:
+        try:
+            return bool(self.title_probe())
+        except Exception:
+            return False
 
     def _arm_pending(self, now: float) -> None:
         if self.drag:

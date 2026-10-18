@@ -79,6 +79,11 @@ DEFAULTS: dict[str, Any] = {
     "typing": {
         "disable_while_typing": True,
     },
+    "window": {
+        "title_drag": True,       # tap a title bar, touch again and slide: move the window
+        "super_move": True,       # Super + one finger: move the window under the pointer
+        "super_resize": True,     # Super + three fingers: resize it
+    },
     "scroll": {
         "method": "twofinger",     # twofinger | edge | none
         "natural": True,
@@ -98,6 +103,7 @@ DEFAULTS: dict[str, Any] = {
         "swipe_threshold_mm": 8.0,     # user's swipes: 9.8-21 mm; taps drift <= 1.4 mm
         "pinch_threshold": 0.22,     # relative spread change
         "step_mm": 16.0,             # distance per step for continuous actions
+        "switch_step_mm": 4.5,       # finer steps for window/app/tab switchers
         "three_finger_drag": False,  # macOS-style; replaces 3-finger swipes
         "pinch_zoom_2f": True,       # 2-finger pinch -> Ctrl+wheel zoom
         "boost": True,               # brief "performance" power profile while gestures animate
@@ -125,6 +131,7 @@ LIMITS: dict[str, tuple[float, float]] = {
     "gestures.swipe_threshold_mm": (3.0, 60.0),
     "gestures.pinch_threshold": (0.05, 0.9),
     "gestures.step_mm": (4.0, 80.0),
+    "gestures.switch_step_mm": (2.0, 30.0),
 }
 
 CHOICES: dict[str, tuple[str, ...]] = {
@@ -148,8 +155,9 @@ PROFILES: dict[str, dict[str, Any]] = {
         "scroll": {"method": "twofinger", "natural": True, "speed": 1.0, "acceleration": 0.3,
                    "horizontal": True,
                    "kinetic": {"enabled": True, "friction": 2.6, "gain": 1.0}},
+        "window": {"title_drag": True, "super_move": True, "super_resize": True},
         "gestures": {"enabled": True, "three_finger_drag": False, "pinch_zoom_2f": True,
-                     "swipe_threshold_mm": 8.0, "step_mm": 16.0,
+                     "swipe_threshold_mm": 8.0, "step_mm": 16.0, "switch_step_mm": 4.5,
                      "bindings": copy.deepcopy(RECOMMENDED_BINDINGS)},
     },
     "macos": {

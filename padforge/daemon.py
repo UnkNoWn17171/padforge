@@ -26,7 +26,9 @@ gi.require_version("Gio", "2.0")
 from gi.repository import Gio, GLib  # noqa: E402
 
 from . import __version__, accel, config, device, gnome, kinetic, touchegg, vpointer  # noqa: E402
+from . import wm  # noqa: E402
 from .boost import Boost  # noqa: E402
+from .wmdrag import SuperDrag  # noqa: E402
 from . import xinput as xi  # noqa: E402
 from .actions import CONTINUOUS, VERTICAL_DOWN_IS_NEXT, Executor  # noqa: E402
 from .gestures import GestureEvent, GestureRecognizer  # noqa: E402
@@ -110,6 +112,7 @@ class Daemon:
         self.vp_xid: int | None = None
         self.coaster = kinetic.Coaster()
         self.boost = Boost()
+        self.wmdrag = SuperDrag()
         self._coast_pad: Pad | None = None
         self._xtest_wheel = [0.0, 0.0]
         self._drag_pressed = False
@@ -257,6 +260,11 @@ class Daemon:
     def _update_engine_params(self) -> None:
         self.eff = c = self.effective_config()
         self.boost.enabled = bool(c["gestures"]["enabled"] and c["gestures"]["boost"])
+        move_b, resize_b = wm.wm_buttons()
+        for e in self.wmdrag.cancel():
+            self._wm_event(e)
+        self.wmdrag = SuperDrag(move=c["window"]["super_move"], resize=c["window"]["super_resize"],
+                                move_button=move_b, resize_button=resize_b)
         if not self.boost.enabled:
             self.boost.release()
         k = c["scroll"]["kinetic"]
@@ -283,6 +291,8 @@ class Daemon:
         pad.recognizer = GestureRecognizer.from_config(c["gestures"], self.continuous_keys)
         pad.tap = TapEngine.from_config(c["tap"], c["click"]["left_handed"],
                                         c["tap"]["engine"] == "padforge")
+        if c["window"]["title_drag"]:
+            pad.tap.title_probe = self._title_probe
         pad.tracker = kinetic.ScrollTracker(c["scroll"]["kinetic"]["min_speed"])
         pad.ratio = kinetic.RatioMeter(self._theory_units_per_mm(pad))
 
@@ -549,6 +559,13 @@ class Daemon:
             self._stop_coast()
         if f.count >= 3 and f.began:
             self.boost.hold()          # ramp CPU/GPU up before the animation starts
+        wev = self.wmdrag.feed(f, self._super_held)
+        for e in wev:
+            self._wm_event(e)
+        if self.wmdrag.active or wev:
+            # Super + touch moves/resizes windows: no taps, gestures or coasting meanwhile.
+            pad.last_count, pad.last_time = f.count, f.time
+            return
         gest = pad.recognizer.feed(f) if pad.recognizer else []
         taps = pad.tap.feed(f, self.last_key_time, pad.recognizer.active,
                             coasting=was_coasting) if pad.tap else []
@@ -566,8 +583,34 @@ class Daemon:
         if f.count == 0 and all(p.last_count == 0 for p in self.pads.values()):
             self._release_held("parmaklar kalktı")
 
+    def _super_held(self) -> bool:
+        """Super down on the keyboard (not our own window-menu Super press)."""
+        if self.executor._cont is not None:
+            return False
+        try:
+            return wm.super_held(self.x.d)
+        except Exception:
+            return False
+
+    def _title_probe(self) -> bool:
+        return wm.pointer_on_title_bar(self.x.d)
+
+    def _wm_event(self, e) -> None:
+        if e.kind == "press":
+            self.event("Super ile pencere " + ("taşıma" if e.button == 1 else "boyutlandırma"))
+            self._pointer_button(e.button, True)
+        elif e.kind == "release":
+            self._pointer_button(e.button, False)
+        elif e.kind == "move":
+            dist = math.hypot(e.dx, e.dy)
+            gain = self.gain(dist / e.dt if e.dt > 1e-4 else 0.0)
+            self._pointer_move(e.dx * gain, e.dy * gain)
+
     def _release_held(self, why: str) -> None:
         """Let go of anything a gesture holds: the 3-finger drag button, the app switcher."""
+        for e in self.wmdrag.cancel():
+            log.info("Super sürüklemesi bırakıldı (%s)", why)
+            self._wm_event(e)
         if self._drag_pressed:
             log.info("sürükleme düğmesi bırakıldı (%s)", why)
             self._pointer_button(1, False)
@@ -579,7 +622,7 @@ class Daemon:
     def _watchdog(self) -> bool:
         """Every second: nothing may stay held while no finger is on any pad."""
         self.boost.tick()
-        if self._drag_pressed or self.executor._cont is not None:
+        if self._drag_pressed or self.executor._cont is not None or self.wmdrag.pressed:
             now = time.monotonic()
             idle = all(p.last_count == 0 or now - p.last_time > 2.0 for p in self.pads.values())
             if idle:

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 
 from .mt import Frame
 
+SWITCHERS = {"window_cycle", "app_switch", "tab_switch"}
 SETTLE_S = 0.15          # time allowed for the remaining fingers to land
 PINCH_MIN_MM = 5.0       # minimum absolute spread change for a pinch (2-finger zoom, drag)
 # 3/4-finger pinch vs swipe. A pinch with the thumb held still also moves the
@@ -90,13 +91,14 @@ class GestureRecognizer:
     def __init__(self, swipe_threshold_mm: float = 12.0, pinch_threshold: float = 0.22,
                  step_mm: float = 16.0, three_finger_drag: bool = False,
                  pinch_zoom_2f: bool = False, continuous_keys: set[str] | None = None,
-                 enabled: bool = True):
+                 enabled: bool = True, step_overrides: dict[str, float] | None = None):
         self.swipe_threshold = swipe_threshold_mm
         self.pinch_threshold = pinch_threshold
         self.step_mm = step_mm
         self.three_finger_drag = three_finger_drag
         self.pinch_zoom_2f = pinch_zoom_2f
         self.continuous_keys = set(continuous_keys or ())
+        self.step_overrides = dict(step_overrides or {})   # key -> mm per step
         self.enabled = enabled
         self.state = self.IDLE
         self.track: _Track | None = None
@@ -104,11 +106,15 @@ class GestureRecognizer:
 
     @classmethod
     def from_config(cls, gcfg: dict, continuous_keys: set[str]) -> "GestureRecognizer":
+        # Switchers (window menu, app/tab switcher) step much finer than volume etc.:
+        # recorded swipes are only 10-21 mm long.
+        switch = {k for k, b in gcfg["bindings"].items() if b["action"] in SWITCHERS}
         return cls(swipe_threshold_mm=gcfg["swipe_threshold_mm"],
                    pinch_threshold=gcfg["pinch_threshold"], step_mm=gcfg["step_mm"],
                    three_finger_drag=gcfg["three_finger_drag"],
                    pinch_zoom_2f=gcfg["pinch_zoom_2f"], continuous_keys=continuous_keys,
-                   enabled=gcfg["enabled"])
+                   enabled=gcfg["enabled"],
+                   step_overrides={k: gcfg["switch_step_mm"] for k in switch})
 
     @property
     def active(self) -> bool:
@@ -300,13 +306,14 @@ class GestureRecognizer:
             return out
         (ax, ay), (bx, by) = _centroid(a), _centroid(b)
         d = (bx - ax) if tr.axis == "x" else (by - ay)
-        n = int(d / self.step_mm)
+        step_mm = self.step_overrides.get(tr.key, self.step_mm)
+        n = int(d / step_mm)
         if n:
             for _ in range(abs(n)):
                 out.append(GestureEvent("step", tr.n, step=1 if n > 0 else -1, key=tr.key,
                                         time=f.time))
             # Move the origin by whole steps only, so no distance is lost.
-            shift = n * self.step_mm
+            shift = n * step_mm
             tr.origin = {s: ((x + shift, y) if tr.axis == "x" else (x, y + shift))
                          for s, (x, y) in tr.origin.items()}
         return out

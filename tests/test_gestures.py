@@ -182,3 +182,17 @@ def test_resting_thumb_does_not_turn_three_fingers_into_four():
     frames = h.put((3, 66), edge=True) + h.put((40, 25), (55, 22), (70, 25))
     frames += h.move(0, -15, 0.15, slots=[1, 2, 3]) + h.lift()
     assert kinds(feed_all(r, frames)) == [("swipe", "swipe3_up")]
+
+
+def test_window_menu_steps_finely():
+    """Recorded swipes are 10-21 mm: a 20 mm swipe must walk several windows."""
+    from padforge import config
+    g = config.defaults()["gestures"]
+    keys = {k for k, b in g["bindings"].items() if b["action"] == "window_cycle"}
+    r = GestureRecognizer.from_config(g, keys)
+    h = Hand()
+    ev = feed_all(r, h.put(*THREE) + h.move(20, 0, 0.2) + h.lift())
+    steps = 1 + sum(1 for e in ev if e.kind == "step")          # begin counts as a step
+    assert steps >= 3, steps
+    # volume-like actions keep the coarse step
+    assert r.step_overrides.get("swipe4_left") is None

@@ -234,3 +234,45 @@ def test_thumb_tapping_alone_in_the_corner_clicks():
     h, eng = Hand(), TapEngine()
     ev = feed_all(eng, h.put((3, 66), edge=True) + h.hold(0.05) + h.lift())
     assert kinds(ev) == [("click", LEFT)]
+
+
+# -- title bar: double-tap-and-drag moves the window instead of maximising -------------
+def title_engine(on_title=True):
+    eng = TapEngine(drag=True, drag_window=0.2)
+    eng.title_probe = lambda: on_title
+    return eng
+
+
+def test_title_bar_tap_then_drag_is_one_press():
+    h, eng = Hand(), title_engine()
+    first = tap(h, eng, (50, 30), hold=0.06)
+    assert kinds(first) == [("press", LEFT)], "button stays down, no click yet"
+    h.idle(0.09)                                   # the user's measured tap gap
+    ev = feed_all(eng, h.put((50, 30)) + h.move(25, 8, 0.3))
+    assert ev == [], "no second press: no double click, the window just moves"
+    assert kinds(feed_all(eng, h.lift())) == [("release", LEFT)]
+
+
+def test_single_tap_on_title_bar_clicks_after_window():
+    h, eng = Hand(), title_engine()
+    assert kinds(tap(h, eng, (50, 30))) == [("press", LEFT)]
+    assert kinds(eng.tick(eng.deadline() + 0.001)) == [("release", LEFT)]
+
+
+def test_double_tap_on_title_bar_is_a_double_click():
+    h, eng = Hand(), title_engine()
+    ev = tap(h, eng, (50, 30), hold=0.05)
+    h.idle(0.08)
+    ev += tap(h, eng, (50, 30), hold=0.05)
+    assert kinds(ev) == [("press", LEFT), ("release", LEFT), ("click", LEFT)]
+
+
+def test_off_title_bar_taps_stay_instant():
+    h, eng = Hand(), title_engine(on_title=False)
+    assert kinds(tap(h, eng, (50, 30))) == [("click", LEFT)]
+
+
+def test_probe_errors_fall_back_to_instant_click():
+    h, eng = Hand(), TapEngine(drag=True)
+    eng.title_probe = lambda: 1 / 0
+    assert kinds(tap(h, eng, (50, 30))) == [("click", LEFT)]

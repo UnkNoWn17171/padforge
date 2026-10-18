@@ -46,6 +46,10 @@ bunu dengeler (ölçülen 0.78 tık/mm = varsayılanla aynı).
 - **Hareketler**: 3/4 parmak 4 yön, 3/4 parmak sıkıştırma, 4 parmak dokunma; 30'dan fazla eylem
   (genel bakış, çalışma alanı, uygulama değiştirici, masaüstü, pencere, sekme, ses, parlaklık,
   medya, yakınlaştırma, özel kısayol, özel komut). GNOME kısayolları gsettings'ten okunur.
+- **Pencere yönetimi**: başlık çubuğuna dokun, hemen tekrar dokunup kaydır → pencere taşınır
+  (çift tık sayılıp büyümez); Super + 1 parmak → imlecin altındaki pencereyi taşı;
+  Super + 3 parmak → en yakın köşeden boyutlandır
+- **Pencere menüsü**: 3 parmak, kullanıcının Super+tekerlek menüsünü açar; her 4.5 mm bir pencere
 - **Canlı test**: touchpad'in gerçek ölçekli görünümü, parmak izleri, tanınan hareketler,
   rapor hızı, ilk rapor gecikmesi, duran parmak titreşimi, okuma gecikmesi
 - **Teşhis**: IRQ/polling modu, I2C uykusu, izinler, çakışan programlar, libinput sürücüsü
@@ -125,7 +129,7 @@ padforge import-touchegg [--disable]   ·   padforge disable-touchegg / enable-t
 ## Testler
 
 ```bash
-python3 -m pytest tests                                       # 199 birim testi
+python3 -m pytest tests                                       # 213 birim testi
 PADFORGE_INTEGRATION=1 python3 -m pytest tests/integration    # 10 test: gerçek Xorg + libinput
 PADFORGE_GUI_DISPLAY=:7 python3 -m pytest tests/integration   # 6 arayüz testi (ör. Xephyr :7)
 padforge selftest

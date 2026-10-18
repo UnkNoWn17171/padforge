@@ -484,8 +484,10 @@ class GesturesPage(Page):
         g.add(fine)
         self.spin(fine, "Kaydırma mesafesi (mm)", "gestures.swipe_threshold_mm", 3, 60, 0.5, 1,
                   subtitle="Parmakların bu kadar kayınca hareket tanınır")
-        self.spin(fine, "Adım mesafesi (mm)", "gestures.step_mm", 4, 80, 1, 0,
-                  subtitle="Uygulama değiştirme ve ses gibi sürekli işlerde her adım")
+        self.spin(fine, "Pencere menüsü adımı (mm)", "gestures.switch_step_mm", 2, 30, 0.5, 1,
+                  subtitle="3 parmakla menüde bir pencere ilerlemek için kaydırma; az = daha hızlı")
+        self.spin(fine, "Diğer sürekli işlerde adım (mm)", "gestures.step_mm", 4, 80, 1, 0,
+                  subtitle="Ses, parlaklık, yakınlaştırma gibi")
         self.slider(fine, "Sıkıştırma eşiği", "gestures.pinch_threshold", 0.05, 0.9, 0.01, 2,
                     subtitle="Parmaklar arası mesafe bu oranda değişince",
                     formatter=lambda v: f"%{v * 100:.0f}")
@@ -516,6 +518,15 @@ class GesturesPage(Page):
                 grp.set_header_suffix(self.button("Önerilene döndür", self._recommended, "flat"))
             for key in keys:
                 self._binding_row(grp, key)
+        win = self.group(page, "Pencere taşıma ve boyutlandırma",
+                         "Super: klavyedeki Windows logolu tuş.")
+        self.switch(win, "Başlıktan çift dokunup taşı", "window.title_drag",
+                    "Pencerenin üst çubuğuna bir kez dokun, hemen tekrar dokunup kaydır: pencere "
+                    "parmağını izler (Dokun ve sürükle açık olmalı)")
+        self.switch(win, "Super + 1 parmak: taşı", "window.super_move",
+                    "Super'i basılı tut, tek parmakla kaydır: imlecin altındaki pencere taşınır")
+        self.switch(win, "Super + 3 parmak: boyutlandır", "window.super_resize",
+                    "Super basılıyken 3 parmakla kaydır: pencere en yakın köşesinden büyür/küçülür")
         if touchegg.USER_CONF.exists():
             extra = self.group(page, "Başka programdan")
             row = Adw.ActionRow(title="Touchégg hareketlerini aktar",
