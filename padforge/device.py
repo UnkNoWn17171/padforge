@@ -256,21 +256,28 @@ class TouchpadReader:
         return self.axis_x.res
 
     def frames(self) -> Iterator[mt.Frame]:
-        """Drain all pending events; yields frames. Non-blocking."""
-        try:
-            events = list(self.dev.read())
-        except BlockingIOError:
-            return
-        except OSError:
-            self.read_errors += 1
-            raise
-        for ev in events:
-            ts = ev.sec + ev.usec / 1e6
-            frame = self.parser.feed(ev.type, ev.code, ev.value, ts)
-            if frame is not None:
-                if frame.resynced and self.parser.dropped_count:
-                    frame = self._resync(ts)
-                yield frame
+        """Drain *all* pending events; yields frames. Non-blocking.
+
+        python-evdev returns at most 64 events per read(), i.e. only ~6 frames
+        of a three-finger touch, so keep reading until the kernel buffer is empty.
+        """
+        while True:
+            try:
+                events = list(self.dev.read())
+            except BlockingIOError:
+                return
+            except OSError:
+                self.read_errors += 1
+                raise
+            if not events:
+                return
+            for ev in events:
+                ts = ev.sec + ev.usec / 1e6
+                frame = self.parser.feed(ev.type, ev.code, ev.value, ts)
+                if frame is not None:
+                    if frame.resynced and self.parser.dropped_count:
+                        frame = self._resync(ts)
+                    yield frame
 
     def _resync(self, ts: float) -> mt.Frame:
         codes = (mt.ABS_MT_TRACKING_ID, mt.ABS_MT_POSITION_X, mt.ABS_MT_POSITION_Y,

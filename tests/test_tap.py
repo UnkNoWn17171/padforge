@@ -1,7 +1,7 @@
 import pytest
 
 from padforge import config
-from padforge.tap import LEFT, MIDDLE, RIGHT, TapEngine
+from padforge.tap import LEFT, MIDDLE, MULTI_CONFIRM_S, RIGHT, TapEngine
 
 from conftest import Hand, feed_all
 
@@ -14,21 +14,75 @@ def tap(h, eng, *pts, hold=0.05, **kw):
     return feed_all(eng, h.put(*pts) + h.hold(hold) + h.lift(), **kw)
 
 
-@pytest.mark.parametrize("pts,button", [
-    ([(50, 30)], LEFT), ([(50, 30), (65, 30)], RIGHT), ([(40, 30), (55, 30), (70, 30)], MIDDLE)])
-def test_taps_click_at_lift(pts, button):
+def settle(eng, h):
+    """Let the multi-finger confirmation window pass."""
+    return eng.tick(h.t + MULTI_CONFIRM_S + 0.001)
+
+
+def test_one_finger_tap_clicks_at_lift():
     h, eng = Hand(), TapEngine()
-    frames = h.put(*pts) + h.hold(0.05)
-    assert feed_all(eng, frames) == []
+    assert feed_all(eng, h.put((50, 30)) + h.hold(0.05)) == []
     lift = h.lift()
     ev = feed_all(eng, lift)
-    assert kinds(ev) == [("click", button)]
+    assert kinds(ev) == [("click", LEFT)]
     assert ev[0].time == lift[0].time, "no delay: the click happens on the lift frame"
+
+
+@pytest.mark.parametrize("pts,button", [
+    ([(50, 30), (65, 30)], RIGHT), ([(40, 30), (55, 30), (70, 30)], MIDDLE)])
+def test_multi_finger_taps_click_after_short_confirmation(pts, button):
+    h, eng = Hand(), TapEngine()
+    assert tap(h, eng, *pts) == []
+    assert eng.deadline() == pytest.approx(h.t - h.dt + MULTI_CONFIRM_S, abs=0.01)
+    assert kinds(settle(eng, h)) == [("click", button)]
+
+
+def test_bounce_before_swipe_is_not_a_middle_click():
+    """Recorded: 3 fingers touch ~110 ms, lift for 29-68 ms, then swipe."""
+    h, eng = Hand(), TapEngine()
+    three = [(40, 30), (55, 30), (70, 30)]
+    assert tap(h, eng, *three, hold=0.11) == []
+    h.idle(0.04)
+    ev = feed_all(eng, h.put(*three))
+    ev += feed_all(eng, h.move(0, -15, 0.15), gesture_active=True)
+    ev += feed_all(eng, h.lift(), gesture_active=True)
+    ev += eng.tick(h.t + 1)
+    assert ev == []
+
+
+def test_quick_double_three_finger_tap_is_two_clicks():
+    """Recorded: intentional 3-finger double taps 59-66 ms apart."""
+    h, eng = Hand(), TapEngine()
+    three = [(40, 30), (55, 30), (70, 30)]
+    first = tap(h, eng, *three, hold=0.1)
+    h.idle(0.06)
+    second = tap(h, eng, *three, hold=0.1)
+    assert first == []
+    assert kinds(second) == [("click", MIDDLE)]
+    assert kinds(settle(eng, h)) == [("click", MIDDLE)]
+
+
+def test_multi_tap_then_pointer_motion_still_clicks():
+    h, eng = Hand(), TapEngine()
+    tap(h, eng, (50, 30), (65, 30))
+    h.idle(0.03)
+    ev = feed_all(eng, h.put((50, 30)) + h.move(20, 0, 0.4))
+    assert kinds(ev) == [("click", RIGHT)], "released once the next touch is clearly no gesture"
+
+
+def test_multi_finger_tap_allows_more_roll():
+    h, eng = Hand(), TapEngine(max_move_mm=1.5)
+    ev = feed_all(eng, h.put((40, 30), (55, 30), (70, 30)) + h.move(2.0, 0, 0.05) + h.lift())
+    ev += settle(eng, h)
+    assert kinds(ev) == [("click", MIDDLE)]
+    ev = feed_all(eng, h.put((50, 30)) + h.move(2.0, 0, 0.05) + h.lift())
+    assert ev == [], "one finger keeps the strict limit"
 
 
 def test_lmr_mapping_and_left_handed():
     h, eng = Hand(), TapEngine(button_map="lmr")
-    assert kinds(tap(h, eng, (50, 30), (65, 30))) == [("click", MIDDLE)]
+    tap(h, eng, (50, 30), (65, 30))
+    assert kinds(settle(eng, h)) == [("click", MIDDLE)]
     h, eng = Hand(), TapEngine(left_handed=True)
     assert kinds(tap(h, eng, (50, 30))) == [("click", RIGHT)]
 
@@ -134,7 +188,7 @@ def test_drag_lock_times_out():
 
 def test_four_finger_tap_action():
     h, eng = Hand(), TapEngine(fingers={4})
-    ev = tap(h, eng, (30, 30), (45, 30), (60, 30), (75, 30))
+    ev = tap(h, eng, (30, 30), (45, 30), (60, 30), (75, 30)) + settle(eng, h)
     assert [e.kind for e in ev] == ["action"]
     # with fingers={4}, normal taps are left to libinput
     assert tap(h, eng, (50, 30)) == []

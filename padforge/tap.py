@@ -16,6 +16,13 @@ from .mt import Frame
 LEFT, MIDDLE, RIGHT = 1, 2, 3
 DRAG_DECIDE_S = 0.04        # wait this long for a 2nd finger before pressing for a drag
 DRAG_DECIDE_MM = 0.3        # ...or until the finger starts moving
+# Measured on the ELAN0303 (2026-10-18): before most 3/4-finger swipes the hand
+# touches and lifts for 29-68 ms first. Multi-finger taps therefore wait this
+# long, and are dropped if the next touch turns into a gesture.
+MULTI_CONFIRM_S = 0.08
+MULTI_SETTLE_S = 0.08       # fingers of one hand land up to ~55 ms apart (measured)
+MULTI_RESOLVE_S = 1.0       # swipes after a bounce were recognised up to 0.7 s later
+MULTI_MOVE_FACTOR = 1.6     # fingers roll more in multi-finger taps (max seen 1.43 mm)
 
 
 @dataclass
@@ -63,6 +70,9 @@ class TapEngine:
         self.lock_until = 0.0
         self.pressed = False
         self._origin: dict[int, tuple[float, float]] = {}
+        self.held: TapEvent | None = None      # multi-finger tap waiting for confirmation
+        self.held_until = 0.0
+        self.held_attached = False
 
     @classmethod
     def from_config(cls, tcfg: dict, left_handed: bool, padforge_engine: bool) -> "TapEngine":
@@ -95,6 +105,12 @@ class TapEngine:
         return RIGHT if self.left_handed else LEFT
 
     def deadline(self) -> float | None:
+        if self.held is not None and not self.held_attached:
+            other = self._state_deadline()
+            return self.held_until if other is None else min(other, self.held_until)
+        return self._state_deadline()
+
+    def _state_deadline(self) -> float | None:
         if self.state == self.PENDING:
             return self.pending_until
         if self.state == self.DECIDE:
@@ -103,8 +119,14 @@ class TapEngine:
             return self.lock_until
         return None
 
+    def _release_held(self) -> list[TapEvent]:
+        ev, self.held, self.held_attached = self.held, None, False
+        return [ev] if ev is not None else []
+
     def tick(self, now: float) -> list[TapEvent]:
         out: list[TapEvent] = []
+        if self.held is not None and not self.held_attached and now >= self.held_until:
+            out += self._release_held()
         if self.state == self.PENDING and now >= self.pending_until:
             self.state = self.IDLE
         elif self.state == self.DECIDE and now >= self.decide_until:
@@ -117,6 +139,7 @@ class TapEngine:
         """Abort everything (device lost, engine disabled)."""
         out = self._release(now) if self.pressed else []
         self.state, self.session = self.IDLE, None
+        self.held, self.held_attached = None, False
         return out
 
     # ------------------------------------------------------------------------
@@ -130,6 +153,11 @@ class TapEngine:
             if count == 0:
                 return out
             # A new touch sequence begins.
+            if self.held is not None:
+                if now <= self.held_until:
+                    self.held_attached = True      # decide when this touch shows what it is
+                else:
+                    out += self._release_held()     # the timer was late: it was a tap
             s = _Session(start=now, coasting=coasting)
             s.typing = (last_key_time is not None and self.typing_guard > 0
                         and 0 <= now - last_key_time < self.typing_guard)
@@ -153,6 +181,15 @@ class TapEngine:
         s.button = s.button or f.button
         s.gesture = s.gesture or gesture_active
 
+        if self.held is not None and self.held_attached:
+            age = now - s.start
+            if s.gesture:
+                self.held, self.held_attached = None, False   # it was the start of a swipe
+            elif (count == 0 or age >= MULTI_RESOLVE_S
+                  or (age >= MULTI_SETTLE_S and count < self.held.fingers)):
+                # Fewer fingers than the tap (e.g. pointer motion) or no gesture at all.
+                out += self._release_held()
+
         if self.state == self.DECIDE:
             if count > 1 or s.button or s.gesture:
                 self.state = self.IDLE               # second finger: not a drag after all
@@ -165,9 +202,10 @@ class TapEngine:
 
     # ------------------------------------------------------------------------
     def _is_tap(self, s: _Session, now: float) -> bool:
+        move_limit = self.max_move * (1.0 if s.max_fingers <= 1 else MULTI_MOVE_FACTOR)
         return (not s.palm_only and not s.button and not s.gesture and not s.typing
                 and not s.coasting and now - s.start <= self.max_duration
-                and s.max_move <= self.max_move and 1 <= s.max_fingers <= 5)
+                and s.max_move <= move_limit and 1 <= s.max_fingers <= 5)
 
     def _end(self, now: float) -> list[TapEvent]:
         s = self.session
@@ -196,13 +234,14 @@ class TapEngine:
 
         if tap and s.max_fingers in self.fingers:
             n = min(4, s.max_fingers)
-            if n == 4:
-                out.append(TapEvent("action", fingers=4, time=now))
+            if n == 1:
+                out.append(TapEvent("click", self.button_for(1), 1, now))
+                self._arm_pending(now)
             else:
-                b = self.button_for(n)
-                out.append(TapEvent("click", b, n, now))
-                if n == 1:
-                    self._arm_pending(now)
+                ev = (TapEvent("action", fingers=4, time=now) if n == 4
+                      else TapEvent("click", self.button_for(n), n, now))
+                out += self._release_held()        # an earlier multi-tap is now certain
+                self.held, self.held_until, self.held_attached = ev, now + MULTI_CONFIRM_S, False
         return out
 
     def _arm_pending(self, now: float) -> None:

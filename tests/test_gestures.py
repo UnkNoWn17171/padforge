@@ -152,4 +152,4 @@ def test_palms_do_not_count():
 def test_from_config():
     from padforge import config
     r = GestureRecognizer.from_config(config.defaults()["gestures"], {"swipe3_left"})
-    assert r.swipe_threshold == 12.0 and "swipe3_left" in r.continuous_keys
+    assert r.swipe_threshold == 8.0 and "swipe3_left" in r.continuous_keys

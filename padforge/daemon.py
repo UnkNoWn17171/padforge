@@ -78,6 +78,8 @@ class Pad:
         self.tracker: kinetic.ScrollTracker | None = None
         self.ratio: kinetic.RatioMeter | None = None
         self.error = ""
+        self.last_count = 0
+        self.last_time = 0.0
 
     @property
     def res(self) -> float:
@@ -177,6 +179,7 @@ class Daemon:
             GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, sig, self.stop)
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGHUP, self._sighup)
         GLib.timeout_add_seconds(10, self._check_touchegg)
+        GLib.timeout_add(1000, self._watchdog)
         if self.touchegg:
             self.error("Touchégg çalışıyor: çift tetiklenmeyi önlemek için PadForge hareketleri "
                        "ve gecikmesiz dokunma bekletildi. Kapatmak: padforge disable-touchegg")
@@ -265,6 +268,12 @@ class Daemon:
         c = self.eff
         if pad.tap:
             self._tap_events(pad, pad.tap.cancel(time.monotonic()))
+        if pad.recognizer is not None:
+            # A reload during a 3-finger drag or app switch must not leave the
+            # button / modifier held (this froze the desktop once: 2026-10-18).
+            for g in pad.recognizer.reset():
+                self._gesture(g)
+            self._release_held("ayar yeniden yüklendi")
         pad.recognizer = GestureRecognizer.from_config(c["gestures"], self.continuous_keys)
         pad.tap = TapEngine.from_config(c["tap"], c["click"]["left_handed"],
                                         c["tap"]["engine"] == "padforge")
@@ -545,6 +554,29 @@ class Daemon:
         self._tap_events(pad, taps)
         if fling is not None and not pad.recognizer.active:
             self._start_coast(pad, fling)
+        pad.last_count, pad.last_time = f.count, f.time
+        if f.count == 0 and all(p.last_count == 0 for p in self.pads.values()):
+            self._release_held("parmaklar kalktı")
+
+    def _release_held(self, why: str) -> None:
+        """Let go of anything a gesture holds: the 3-finger drag button, the app switcher."""
+        if self._drag_pressed:
+            log.info("sürükleme düğmesi bırakıldı (%s)", why)
+            self._pointer_button(1, False)
+            self._drag_pressed = False
+        if self.executor._cont is not None:
+            log.info("sürekli eylem bitirildi (%s)", why)
+            self.executor.end()
+
+    def _watchdog(self) -> bool:
+        """Every second: nothing may stay held while no finger is on any pad."""
+        if self._drag_pressed or self.executor._cont is not None:
+            now = time.monotonic()
+            idle = all(p.last_count == 0 or now - p.last_time > 2.0 for p in self.pads.values())
+            if idle:
+                self._release_held("bekçi")
+                self._flush_x()
+        return True
 
     def _schedule_tap_timer(self) -> None:
         deadlines = [p.tap.deadline() for p in self.pads.values() if p.tap]

@@ -73,7 +73,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "gestures": {
         "enabled": True,
-        "swipe_threshold_mm": 12.0,
+        "swipe_threshold_mm": 8.0,     # user's swipes: 9.8-21 mm; taps drift <= 1.4 mm
         "pinch_threshold": 0.22,     # relative spread change
         "step_mm": 16.0,             # distance per step for continuous actions
         "three_finger_drag": False,  # macOS-style; replaces 3-finger swipes
