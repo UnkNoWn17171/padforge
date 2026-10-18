@@ -6,6 +6,8 @@ Etiketler: **ÖLÇÜLDÜ** (bu makinede ölçüldü/denendi) · **ÇIKARIM** (ö
 ## 1. Nerede ne var
 
 - Repo: `github.com/UnkNoWn17171/padforge` — **özel (private)**, dal `main`.
+  Bu makinede yerel kopya: `~/projeler/padforge` (2026-10-19'dan beri; önceki kopya bir
+  Claude oturumunun geçici klasöründeydi).
   Yeni makinede: `gh repo clone UnkNoWn17171/padforge ~/projeler/padforge`
 - Kurulu kopya (repo değil, `install.sh` kopyalar):
   - `~/.local/share/padforge/lib` — çalışan kod
@@ -24,8 +26,8 @@ Etiketler: **ÖLÇÜLDÜ** (bu makinede ölçüldü/denendi) · **ÇIKARIM** (ö
 - Servis: `active`, `enabled`; touchpad okunuyor (`/dev/input/event5`, X id 14), 143 Hz.
 - Sanal işaretçide basılı kalan tuş yok (`button[1..3]=up`).
 - Birim testleri: 232 geçti (17 atlandı = X/arayüz isteyen testler); gerçek Xorg 10/10,
-  arayüz 7/7 (ekransız: `gtk4-broadwayd`), `padforge selftest` BAŞARILI (2026-10-19).
-- Son iş: `fix/hata-ayiklama-super` dalı (bölüm 6b), kurulu olan bu dal; `main` = `4a8d6e0`.
+  arayüz 8/8 (ekransız: `gtk4-broadwayd`), `padforge selftest` BAŞARILI (2026-10-19).
+- Son iş: hata ayıklama turu (bölüm 6b), `main`'e alındı; kurulu olan `main`.
 
 ## 3. Aktif ayarlar
 
@@ -78,7 +80,7 @@ Super ile taşıma/boyutlandırma, pilde akıcılık — hepsi "iyi çalışıyo
 - python-evdev tek okumada ≤64 olay döndürüyor → `frames()` tampon boşalana kadar okuyor.
 - Her zaman `/usr/bin/python3` kullan (PATH'teki python `~/venv-ardupilot`).
 
-## 6b. Hata ayıklama turu (2026-10-19, dal `fix/hata-ayiklama-super`)
+## 6b. Hata ayıklama turu (2026-10-19, `main`'e alındı)
 
 - **Medya tuşları hiç çalışmıyordu** (ÖLÇÜLDÜ, kayıtta `bilinmeyen tuş: XF86AudioPlay`):
   python-xlib `XF86_AudioPlay` yazımını istiyor. Ses, parlaklık, oynat/duraklat, parça →
@@ -91,7 +93,8 @@ Super ile taşıma/boyutlandırma, pilde akıcılık — hepsi "iyi çalışıyo
 - **Yarım yazılmış ayar dosyası**: yeniden yüklemede dosya `.broken` diye kenara
   atılıp varsayılana dönülüyordu → artık son iyi ayarla devam (`config.read`).
 - **Açık arayüz eski kopyayı yazıyordu**: GNOME'dan benimsenen ya da dosyadan yapılan
-  değişiklik, arayüzde bir sonraki ayarda eziliyordu → arayüz dosyayı izliyor.
+  değişiklik, arayüzde bir sonraki ayarda (ya da kapatınca) eziliyordu → arayüz dosyayı
+  izliyor, kapanışta yalnız bekleyen düzenlemeyi yazıyor.
 - Küçükler: ikinci `padforge daemon` artık hiçbir şeye dokunmadan çıkıyor; kapanışta
   Super-sürükleme tuşu da bırakılıyor; touchpad ayrılınca açık pencere menüsü (Super)
   hemen bırakılıyor; SYN_DROPPED sonrası geçerli MT yuvası okunuyor.
@@ -129,8 +132,9 @@ Testler:
 ```bash
 /usr/bin/python3 -m pytest tests
 PADFORGE_INTEGRATION=1 /usr/bin/python3 -m pytest tests/integration   # gerçek Xorg, 10 test
-Xephyr :7 -screen 1120x820 -nolisten tcp -ac -br &
-PADFORGE_GUI_DISPLAY=:7 /usr/bin/python3 -m pytest tests/integration  # arayüz, 6 test
+gtk4-broadwayd :9 &      # ekransız, pencere açmaz (Xephyr :7 de olur)
+GDK_BACKEND=broadway BROADWAY_DISPLAY=:9 PADFORGE_GUI_DISPLAY=:9 \
+    /usr/bin/python3 -m pytest tests/integration/test_gui.py      # arayüz, 8 test
 ```
 
 Ölçüm araçları (`tools/`):

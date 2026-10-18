@@ -166,3 +166,15 @@ def test_change_made_elsewhere_is_picked_up_not_overwritten(win):
     assert row.get_selected() == ACTION_IDS.index("minimize")
     win.set("scroll.natural", not win.get("scroll.natural"))     # an unrelated edit here
     assert saved(win)["gestures"]["bindings"]["swipe3_up"] == {"action": "minimize"}
+
+
+def test_closing_does_not_write_back_an_old_copy(win):
+    """Closing with nothing edited must not overwrite a change made elsewhere a moment ago."""
+    from padforge import config
+    cfg = config.defaults()
+    cfg["gestures"]["bindings"]["swipe3_up"] = {"action": "minimize"}
+    config.save(cfg, win.cfg_file)
+    win._closing()                      # before the file monitor had a chance to read it
+    win.spin(0.3)
+    assert json.loads(win.cfg_file.read_text())["gestures"]["bindings"]["swipe3_up"] == \
+        {"action": "minimize"}

@@ -134,7 +134,8 @@ class MainWindow(Adw.ApplicationWindow):
     def _closing(self, *_):
         if self._current is not None:
             self._current.hidden()
-        self._flush_save()
+        if self._save_id:           # only a pending edit; rewriting all could undo outside changes
+            self._flush_save()
         self._monitor.cancel()
         if self._ext_id:
             GLib.source_remove(self._ext_id)
