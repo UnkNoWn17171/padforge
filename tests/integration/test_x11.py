@@ -155,3 +155,50 @@ def test_evdev_pipeline_recognizes_swipe(x):
         reader.close()
     finally:
         vt.close()
+
+
+def test_hidden_mouse_button_still_reported_raw(x):
+    """What PadForge's mouse buttons rely on: a button mapped to 0 never reaches
+    applications, yet XI2 raw events still report it with its physical number."""
+    import select
+    from evdev import UInput
+    from evdev import ecodes as e
+    from padforge import mouse
+    ui = UInput({e.EV_KEY: [e.BTN_LEFT, e.BTN_RIGHT, e.BTN_MIDDLE, e.BTN_SIDE, e.BTN_EXTRA],
+                 e.EV_REL: [e.REL_X, e.REL_Y, e.REL_WHEEL]},
+                name=f"{virtual.TEST_PREFIX} Mouse {os.getpid()}", vendor=0x1209,
+                product=0x7e58, bustype=e.BUS_USB)
+    try:
+        dev = virtual.wait_x_device(x, ui.name)
+        assert dev is not None
+        time.sleep(0.5)
+        x.float_device(dev.id)
+        X = xi.xinput
+        x.select(x.d.screen().root, [(dev.id, X.RawButtonPressMask | X.ButtonPressMask)])
+
+        def press(code):
+            ui.write(e.EV_KEY, code, 1)
+            ui.syn()
+            ui.write(e.EV_KEY, code, 0)
+            ui.syn()
+            got, end = [], time.monotonic() + 0.3
+            while time.monotonic() < end:
+                select.select([x.d.fileno()], [], [], 0.02)
+                while x.d.pending_events():
+                    ev = x.d.next_event()
+                    if getattr(ev, "evtype", None) == X.RawButtonPress:
+                        got.append(("raw", xi.parse_raw_event(ev.evtype, ev.data).detail))
+                    elif getattr(ev, "evtype", None) == X.ButtonPress:
+                        got.append(("app", ev.data.detail))
+            return got
+
+        base = x.button_map(dev.id)
+        assert base[:9] == list(range(1, 10))
+        assert x.set_button_map(dev.id, mouse.wanted_map(base, {8}))
+        assert x.button_map(dev.id)[7] == 0
+        assert press(e.BTN_SIDE) == [("raw", 8)], "hidden from applications, still seen raw"
+        assert press(e.BTN_EXTRA) == [("raw", 9), ("app", 9)], "other buttons untouched"
+        assert x.set_button_map(dev.id, base)
+        assert press(e.BTN_SIDE) == [("raw", 8), ("app", 8)], "given back"
+    finally:
+        ui.close()

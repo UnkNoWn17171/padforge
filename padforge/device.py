@@ -195,6 +195,65 @@ def list_touchpads(sys_input: Path = SYS_INPUT, udev_root: Path = UDEV_DATA) -> 
     return pads
 
 
+@dataclass
+class MouseInfo:
+    node: str                      # /dev/input/eventN
+    name: str
+    sysfs: str
+    vendor: int = 0
+    product: int = 0
+    bustype: int = 0
+    key_codes: set[int] = field(default_factory=set)
+
+    @property
+    def declared_buttons(self) -> list[int]:
+        """X button numbers the device claims beyond left/right (2 and 8+).
+
+        Receivers often declare 16 buttons whatever mouse is paired (the Bolt receiver
+        here does), so this is an upper bound; the buttons really pressed are learned.
+        """
+        out = [2] if mt.BTN_MIDDLE in self.key_codes else []
+        # xf86-input-libinput: BTN_SIDE (0x113) -> 8, BTN_EXTRA -> 9, ... (btn_linux2xorg)
+        out += [8 + c - mt.BTN_SIDE for c in sorted(self.key_codes) if mt.BTN_SIDE <= c < 0x120]
+        return out
+
+
+def list_mice(sys_input: Path = SYS_INPUT, udev_root: Path = UDEV_DATA) -> list[MouseInfo]:
+    """External mice: USB/Bluetooth, not touchpads, not virtual (uinput: ours, remote desktop)."""
+    mice = []
+    try:
+        entries = sorted(sys_input.glob("event*"), key=lambda p: int(p.name[5:] or 0))
+    except OSError:
+        return mice
+    for ev in entries:
+        dev = ev / "device"
+        try:
+            major, minor = (int(x) for x in _read(ev / "dev", "0:0").split(":"))
+        except ValueError:
+            continue
+        udev = udev_properties(major, minor, udev_root)
+        if udev.get("ID_INPUT_MOUSE") != "1" or udev.get("ID_INPUT_TOUCHPAD") == "1":
+            continue
+        sysfs = os.path.realpath(dev)
+        name = _read(dev / "name")
+        if sysfs.startswith("/sys/devices/virtual/") or name.startswith("PadForge"):
+            continue
+
+        def hexfile(n):
+            try:
+                return int(_read(dev / "id" / n, "0"), 16)
+            except ValueError:
+                return 0
+        bustype = hexfile("bustype")
+        if bustype in (0x11, 0x18):      # PS/2, I2C: the laptop's own pointing devices
+            continue
+        mice.append(MouseInfo(node=f"/dev/input/{ev.name}", name=name, sysfs=sysfs,
+                              vendor=hexfile("vendor"), product=hexfile("product"),
+                              bustype=bustype,
+                              key_codes=_bits(_read(dev / "capabilities" / "key", "0"))))
+    return mice
+
+
 def irq_count(name: str) -> tuple[int | None, int]:
     """(irq number, total count) for an /proc/interrupts line containing ``name``."""
     try:

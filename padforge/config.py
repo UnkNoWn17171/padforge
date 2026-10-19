@@ -20,6 +20,10 @@ GESTURE_KEYS = [
     f"swipe{n}_{d}" for n in (3, 4) for d in ("up", "down", "left", "right")
 ] + [f"pinch{n}_{d}" for n in (3, 4) for d in ("in", "out")] + ["tap4"]
 
+# Mouse buttons that may get an action: the wheel click and the extra buttons.
+# Left/right (1, 3) and the wheel (4-7) are never taken over.
+MOUSE_BUTTONS = (2,) + tuple(range(8, 33))
+
 # The recommended layout, as simple as possible:
 #   3 fingers up = the Super key (GNOME: Activities)
 #   3 fingers down/left/right = window switcher (the user's Super+wheel menu);
@@ -84,6 +88,12 @@ DEFAULTS: dict[str, Any] = {
         "title_drag": True,       # tap a title bar, touch again and slide: move the window
         "super_move": True,       # Super + one finger: move the window under the pointer
         "super_resize": True,     # Super + three fingers: resize it
+    },
+    "mouse": {
+        # External mouse buttons, X button number (as text) -> binding like the gestures'.
+        # A listed button is hidden from applications and runs its action ("none" turns
+        # it off); an unlisted one works as usual. 2 = wheel click, 8/9 = side buttons.
+        "buttons": {},
     },
     "scroll": {
         "method": "twofinger",     # twofinger | edge | none
@@ -247,6 +257,8 @@ def _normalize(template: Any, value: Any) -> Any:
             for key in GESTURE_KEYS:
                 out[key] = _normalize_binding(value.get(key, template[key]))
             return out
+        if template is DEFAULTS["mouse"]["buttons"]:
+            return _normalize_mouse_buttons(value)
         return {k: _normalize(t, value.get(k, t)) for k, t in template.items()}
     if isinstance(template, bool):
         return value if isinstance(value, bool) else template
@@ -269,6 +281,19 @@ def _normalize_binding(value: Any) -> dict:
     out = {"action": value["action"]}
     if isinstance(value.get("arg"), str) and value["arg"]:
         out["arg"] = value["arg"]
+    return out
+
+
+def _normalize_mouse_buttons(value: dict) -> dict:
+    """Keep assignable buttons with a valid binding; never left/right or the wheel."""
+    out = {}
+    for key, b in value.items():
+        if not str(key).isdigit() or int(key) not in MOUSE_BUTTONS:
+            continue
+        if isinstance(b, str):
+            b = {"action": b}
+        if isinstance(b, dict) and isinstance(b.get("action"), str):
+            out[str(int(key))] = _normalize_binding(b)
     return out
 
 

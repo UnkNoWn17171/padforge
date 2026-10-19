@@ -25,9 +25,9 @@ Etiketler: **ÖLÇÜLDÜ** (bu makinede ölçüldü/denendi) · **ÇIKARIM** (ö
 
 - Servis: `active`, `enabled`; touchpad okunuyor (`/dev/input/event5`, X id 14), 143 Hz.
 - Sanal işaretçide basılı kalan tuş yok (`button[1..3]=up`).
-- Birim testleri: 232 geçti (17 atlandı = X/arayüz isteyen testler); gerçek Xorg 10/10,
-  arayüz 8/8 (ekransız: `gtk4-broadwayd`), `padforge selftest` BAŞARILI (2026-10-19).
-- Son iş: hata ayıklama turu (bölüm 6b), `main`'e alındı; kurulu olan `main`.
+- Birim testleri: 244 geçti (21 atlandı = X/arayüz isteyen testler); gerçek Xorg 11/11,
+  arayüz 10/10 (ekransız: `gtk4-broadwayd`), `padforge selftest` BAŞARILI (2026-10-19).
+- Son iş: hata ayıklama turu (6b) ve fare tuşları (6c), `main`'e alındı; kurulu olan `main`.
 
 ## 3. Aktif ayarlar
 
@@ -64,6 +64,7 @@ Super ile taşıma/boyutlandırma, pilde akıcılık — hepsi "iyi çalışıyo
 - `gestures.py` kaydırma/sıkıştırma tanıma · `tap.py` gecikmesiz dokunma + başlık çubuğu taşıma ·
   `wmdrag.py` Super + parmakla taşıma/boyutlandırma · `kinetic.py` kinetik kaydırma.
 - `actions.py` eylemler (XTest, EWMH, Super Scroll Switch D-Bus) · `boost.py` güç profili tutma.
+- `mouse.py` + `device.list_mice()` harici fare tuşları (eşleme hesabı; daemon uygular).
 - `xinput.py` libinput özellikleri (eğri, kaydırma) · `gnome.py` GNOME ayarlarıyla çift yönlü senkron.
 - `daemon.py` hepsini bağlar; durum soketi `$XDG_RUNTIME_DIR/padforge/daemon.sock`.
 - `gui/` GTK4 arayüz (mor-siyah tema `gui/theme.css`).
@@ -103,12 +104,28 @@ Super ile taşıma/boyutlandırma, pilde akıcılık — hepsi "iyi çalışıyo
 - "Logitech USB Receiver" da touchpad olarak açılıyor (Bolt alıcısının boş PTP arayüzü,
   0 kare) — zararsız.
 
+## 6c. Fare tuşları (2026-10-19, `main`'e alındı)
+
+- Fare: **Logitech Signature M650 L** (Bolt alıcısı, X'te "Logitech USB Receiver Mouse"),
+  tuşlar: sol, sağ, orta (2), Geri (8), İleri (9). Alıcı 16 tuş bildiriyor (çoğu yok):
+  gerçek tuşlar basıldıkça öğrenilip `~/.cache/padforge/devices.json`'a yazılıyor.
+- Yöntem (ÖLÇÜLDÜ, entegrasyon testi var): görev atanan tuşun o faredeki X eşlemesi 0 →
+  uygulamalar görmez, XI2 ham olay fiziksel numarayla gelir → daemon eylemi çalıştırır.
+  Yakalama/izin/sudo yok. Yalnız USB/Bluetooth fiziksel fareler (sanal ve dahili hariç).
+- Servis durunca tuşlar geri verilir; çökme artığı sonraki başlangıçta onarılır
+  (`zeroed` kaydı). Elle geri: `xinput set-button-map "Logitech USB Receiver Mouse" $(seq 1 20)`.
+- Arayüz › Fare: bağlı fare, tuşa bas → satırı belirir, görev seç, ▶ ile dene. Sayfa açıkken
+  tuşlar görev çalıştırmaz (yalnız bulunur). Yeni fare ilk görülünce bir kez bildirim.
+
 ## 7. Açık işler
 
 - 4 parmak sıkıştırma gerçek parmakla hiç kaydedilmedi (kayıtta yalnız 4 parmak dokunma vardı)
   → **BİLİNMİYOR**; şu an zaten kapalı.
 - Kinetik kaydırma uzunluğu tercihi sorulmadı → **BİLİNMİYOR**.
 - NVIDIA ekran kartı pilde uyanık (~8 W, Xorg tutuyor) → PadForge dışı, ayrı iş.
+- GNOME'un bir süre aradan sonraki ilk bildirimi X'i kilitliyor: 2,2 sn, sonra 0,36 sn,
+  sonra 2 ms (ÖLÇÜLDÜ 2026-10-19, X gidiş-dönüş süresi) → PadForge dışı; bu yüzden
+  "Fare bulundu" bildirimi başlangıçtan 5 sn sonraya ertelendi.
 - Wayland desteklenmiyor (yalnızca X11).
 - Repo özel; açmak istersen:
   `gh repo edit UnkNoWn17171/padforge --visibility public --accept-visibility-change-consequences`
@@ -131,10 +148,10 @@ Testler:
 
 ```bash
 /usr/bin/python3 -m pytest tests
-PADFORGE_INTEGRATION=1 /usr/bin/python3 -m pytest tests/integration   # gerçek Xorg, 10 test
+PADFORGE_INTEGRATION=1 /usr/bin/python3 -m pytest tests/integration   # gerçek Xorg, 11 test
 gtk4-broadwayd :9 &      # ekransız, pencere açmaz (Xephyr :7 de olur)
 GDK_BACKEND=broadway BROADWAY_DISPLAY=:9 PADFORGE_GUI_DISPLAY=:9 \
-    /usr/bin/python3 -m pytest tests/integration/test_gui.py      # arayüz, 8 test
+    /usr/bin/python3 -m pytest tests/integration/test_gui.py      # arayüz, 10 test
 ```
 
 Ölçüm araçları (`tools/`):

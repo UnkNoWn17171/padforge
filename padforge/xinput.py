@@ -280,6 +280,22 @@ class XInput:
         XIChangeHierarchyDetach(display=self.d.display, opcode=self.opcode, deviceid=devid)
         self.d.sync()
 
+    # -- per-device button mapping (XI 1) ----------------------------------------------
+    def button_map(self, devid: int) -> list[int]:
+        """The device's button map: entry i is what physical button i+1 sends (0 = nothing)."""
+        r = GetDeviceButtonMapping(display=self.d.display, opcode=self.opcode, deviceid=devid)
+        return list(r.map)
+
+    def set_button_map(self, devid: int, mapping: list[int]) -> bool:
+        """Set it; False while a button that changes is held down (X answers MappingBusy).
+
+        A button mapped to 0 never reaches applications, but XI2 raw events still
+        report it with its physical number (measured on this Xorg, 2026-10-19).
+        """
+        r = SetDeviceButtonMapping(display=self.d.display, opcode=self.opcode, deviceid=devid,
+                                   map=list(mapping))
+        return r.status == 0
+
 
 def _same(current: Any, wanted: list[Any]) -> bool:
     if not isinstance(current, list) or len(current) != len(wanted):
@@ -316,6 +332,45 @@ class XIChangeHierarchyDetach(rq.Request):
     def __init__(self, display, opcode, deviceid):
         super().__init__(display=display, opcode=opcode, num_changes=1, type=4, length=2,
                          deviceid=deviceid)
+
+
+class GetDeviceButtonMapping(rq.ReplyRequest):
+    _request = rq.Struct(
+        rq.Card8("opcode"),
+        rq.Opcode(28),
+        rq.RequestLength(),
+        rq.Card8("deviceid"),
+        rq.Pad(3),
+    )
+    _reply = rq.Struct(
+        rq.ReplyCode(),
+        rq.Card8("xi_reply_type"),
+        rq.Card16("sequence_number"),
+        rq.ReplyLength(),
+        rq.LengthOf("map", 1),
+        rq.Pad(23),
+        rq.List("map", rq.Card8Obj),
+    )
+
+
+class SetDeviceButtonMapping(rq.ReplyRequest):
+    _request = rq.Struct(
+        rq.Card8("opcode"),
+        rq.Opcode(29),
+        rq.RequestLength(),
+        rq.Card8("deviceid"),
+        rq.LengthOf("map", 1),
+        rq.Pad(2),
+        rq.List("map", rq.Card8Obj),
+    )
+    _reply = rq.Struct(
+        rq.ReplyCode(),
+        rq.Card8("xi_reply_type"),
+        rq.Card16("sequence_number"),
+        rq.ReplyLength(),
+        rq.Card8("status"),          # 0 Success, 1 MappingBusy, 2 Failed
+        rq.Pad(23),
+    )
 
 
 def _fp3232(buf: bytes, off: int) -> float:

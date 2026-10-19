@@ -10,7 +10,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, GLib, Gtk  # noqa: E402
 
-from .. import __version__, accel, config, device, diagnostics, touchegg  # noqa: E402
+from .. import __version__, accel, config, device, diagnostics, mouse, touchegg  # noqa: E402
 from ..actions import ACTIONS  # noqa: E402
 from . import service  # noqa: E402
 from .widgets import CurveEditor, TouchView  # noqa: E402
@@ -611,6 +611,206 @@ class GesturesPage(Page):
         self.win.run_action(b.get("action", "none"), b.get("arg"))
 
 
+# ================================================================================ mouse
+class MousePage(Page):
+    id, title, icon = "mouse", "Fare", "input-mouse-symbolic"
+    intro = ("Harici farendeki ek tuşlara (yan tuşlar, tekerlek tıklaması) görev ver. Görev "
+             "verdiğin tuş uygulamalara gitmez, yerine görev çalışır; 'Varsayılan' bıraktığın "
+             "tuş her zamanki gibi çalışır. Sol ve sağ tuşa dokunulmaz.")
+
+    def build(self):
+        page = self.new_page()
+        self.mice_group = self.group(page, "Bağlı fare")
+        self.mice_rows: list = []
+        self._mice_sig = None
+        self.buttons_group = self.group(
+            page, "Tuşlar", "Bu sayfa açıkken fare tuşları ve hareketler görev çalıştırmaz: "
+                            "bastığın tuş yalnızca bulunur. Denemek için ▶.")
+        self.hint = Adw.ActionRow(title="Farendeki bir tuşa bas",
+                                  subtitle="Yan tuşa ya da tekerleğe bas: tuşun satırı belirir.")
+        self.hint.add_prefix(Gtk.Image(icon_name="input-mouse-symbolic"))
+        self.buttons_group.add(self.hint)
+        self.rows: dict[int, tuple] = {}
+        self.pause = service.PauseHandle()
+        self._x = None
+        self._xids: set[int] = set()
+        self._watch = 0
+        self._flash: dict[int, int] = {}
+        return page
+
+    # -- connected mice ----------------------------------------------------------------
+    def status_changed(self, status):
+        mice = (status or {}).get("mice")
+        if mice is None:              # service not running: still show what is plugged in
+            mice = [{"name": m.name, "seen": []} for m in device.list_mice()]
+        sig = tuple((m["name"], tuple(m.get("seen", []))) for m in mice)
+        if sig == self._mice_sig:
+            return
+        self._mice_sig = sig
+        for r in self.mice_rows:
+            self.mice_group.remove(r)
+        self.mice_rows = []
+        for m in mice:
+            seen = m.get("seen", [])
+            row = Adw.ActionRow(title=esc(m["name"]), subtitle=esc(
+                "Bulunan ek tuşlar: " + ", ".join(mouse.label(b) for b in seen) if seen
+                else "Ek tuşlarına basınca burada listelenir"))
+            row.add_prefix(Gtk.Image(icon_name="input-mouse-symbolic"))
+            self.mice_group.add(row)
+            self.mice_rows.append(row)
+            for b in seen:
+                self._ensure_row(b)
+        if not mice:
+            row = Adw.ActionRow(title="Harici fare yok",
+                                subtitle="Bir fare bağlayınca burada görünür")
+            self.mice_group.add(row)
+            self.mice_rows.append(row)
+
+    # -- button rows -------------------------------------------------------------------
+    def after_refresh(self):
+        for key in self.win.get("mouse.buttons") or {}:
+            self._ensure_row(int(key))
+        for b in self.rows:
+            self._load_row(b)
+
+    def _ensure_row(self, button: int):
+        if button in self.rows:
+            return self.rows[button][0]
+        labels = ["Varsayılan (her zamanki gibi)"] + [
+            ACTIONS[a].label + ("  ⟳" if ACTIONS[a].continuous else "") for a in ACTION_IDS]
+        row = Adw.ComboRow(title=esc(mouse.label(button)), subtitle=f"tuş {button}",
+                           model=Gtk.StringList.new(labels), enable_search=True)
+        test = self.button(None, lambda: self._test(button), "flat",
+                           "media-playback-start-symbolic", "Bu görevi şimdi çalıştır")
+        row.add_suffix(test)
+        entry = Adw.EntryRow(title=esc(SHORTCUT_HINT), show_apply_button=True)
+        entry.set_visible(False)
+
+        def changed(r, _p):
+            if self.win.loading:
+                return
+            buttons = dict(self.win.get("mouse.buttons"))
+            if r.get_selected() == 0:
+                buttons.pop(str(button), None)
+            else:
+                action = ACTION_IDS[r.get_selected() - 1]
+                b = {"action": action}
+                old = buttons.get(str(button), {})
+                if ACTIONS[action].needs_arg and old.get("action") == action and old.get("arg"):
+                    b["arg"] = old["arg"]
+                buttons[str(button)] = b
+            self.win.set("mouse.buttons", buttons)
+            self._load_row(button)
+
+        def applied(e):
+            buttons = dict(self.win.get("mouse.buttons"))
+            b = dict(buttons.get(str(button), {}))
+            if not b:
+                return
+            text = e.get_text().strip()
+            if text:
+                b["arg"] = text
+            else:
+                b.pop("arg", None)
+            buttons[str(button)] = b
+            self.win.set("mouse.buttons", buttons)
+            self.win.toast("Kaydedildi")
+        row.connect("notify::selected", changed)
+        entry.connect("apply", applied)
+        self.rows[button] = (row, entry, test)
+        # keep the rows in button order
+        for b in sorted(self.rows):
+            for w in self.rows[b][:2]:
+                if w.get_parent() is not None:
+                    self.buttons_group.remove(w)
+        for b in sorted(self.rows):
+            self.buttons_group.add(self.rows[b][0])
+            self.buttons_group.add(self.rows[b][1])
+        self._load_row(button)
+        return row
+
+    def _load_row(self, button: int):
+        row, entry, test = self.rows[button]
+        b = (self.win.get("mouse.buttons") or {}).get(str(button))
+        action = b["action"] if b else None
+        self.win.loading += 1
+        try:
+            row.set_selected(1 + ACTION_IDS.index(action) if action in ACTION_IDS else 0)
+            entry.set_text(b.get("arg", "") if b else "")
+            needs = bool(action in ACTIONS and ACTIONS[action].needs_arg)
+            entry.set_visible(needs)
+            if needs:
+                entry.set_title(esc("Komut (ör. gnome-terminal)" if action == "command"
+                                    else SHORTCUT_HINT))
+            test.set_sensitive(b is not None)
+        finally:
+            self.win.loading -= 1
+
+    def _test(self, button: int):
+        b = (self.win.get("mouse.buttons") or {}).get(str(button))
+        if b:
+            self.win.run_action(b["action"], b.get("arg"))
+
+    # -- "press a button" ----------------------------------------------------------------
+    def shown(self):
+        self.pause.acquire()
+        if self._x is not None:
+            return
+        try:
+            from .. import xinput as xi
+            x = xi.XInput()
+            nodes = {m.node for m in device.list_mice()}
+            self._xids = {d.id for d in x.devices() if d.node in nodes and not d.floating}
+            x.select(x.d.screen().root, [(xi.xinput.AllDevices, xi.xinput.RawButtonPressMask)])
+            self._x = x
+            self._watch = GLib.io_add_watch(x.d.fileno(), GLib.PRIORITY_DEFAULT, GLib.IO_IN,
+                                            self._x_ready)
+        except Exception as exc:
+            self.hint.set_subtitle(esc(f"Tuşlar dinlenemiyor: {exc}"))
+
+    def hidden(self):
+        self.pause.release()
+        if self._watch:
+            GLib.source_remove(self._watch)
+            self._watch = 0
+        if self._x is not None:
+            try:
+                self._x.d.close()
+            except Exception:
+                pass
+            self._x = None
+
+    def _x_ready(self, fd, cond) -> bool:
+        from .. import xinput as xi
+        try:
+            while self._x.d.pending_events():
+                ev = self._x.d.next_event()
+                if getattr(ev, "evtype", None) != xi.xinput.RawButtonPress:
+                    continue
+                raw = xi.parse_raw_event(ev.evtype, ev.data)
+                if raw.deviceid in self._xids and (raw.detail == 2 or raw.detail >= 8):
+                    self.pressed(raw.detail)
+        except Exception:
+            self._watch = 0
+            self.hidden()
+            return False
+        return True
+
+    def pressed(self, button: int):
+        """A mouse button was pressed while the page is open: show (and mark) its row."""
+        row = self._ensure_row(button)
+        self.hint.set_subtitle(esc(f"Son basılan: {mouse.label(button)} (tuş {button})"))
+        row.set_subtitle(f"tuş {button} · az önce basıldı")
+        if button in self._flash:
+            GLib.source_remove(self._flash[button])
+
+        def clear():
+            self._flash.pop(button, None)
+            row.set_subtitle(f"tuş {button}")
+            return False
+        self._flash[button] = GLib.timeout_add(1500, clear)
+
+
 # ================================================================================ live
 class LivePage(Page):
     id, title, icon = "live", "Canlı test", "padforge-live-symbolic"
@@ -978,4 +1178,5 @@ class AdvancedPage(Page):
         self.win.toast("Varsayılanlara dönüldü")
 
 
-PAGES = [OverviewPage, PointerPage, TapPage, ScrollPage, GesturesPage, LivePage, AdvancedPage]
+PAGES = [OverviewPage, PointerPage, TapPage, ScrollPage, GesturesPage, MousePage, LivePage,
+         AdvancedPage]

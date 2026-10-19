@@ -26,8 +26,8 @@ gi.require_version("Gio", "2.0")
 from gi.repository import Gio, GLib  # noqa: E402
 from Xlib import error as xerror  # noqa: E402
 
-from . import __version__, accel, config, device, gnome, kinetic, touchegg, vpointer  # noqa: E402
-from . import wm  # noqa: E402
+from . import APP_ID, __version__, accel, config, device, gnome, kinetic, touchegg, vpointer  # noqa: E402
+from . import mouse, wm  # noqa: E402
 from .boost import Boost  # noqa: E402
 from .wmdrag import SuperDrag  # noqa: E402
 from . import xinput as xi  # noqa: E402
@@ -117,6 +117,7 @@ class Daemon:
         self._coast_pad: Pad | None = None
         self._xtest_wheel = [0.0, 0.0]
         self._drag_pressed = False
+        self.mice: dict[int, mouse.Mouse] = {}      # external mice by X device id
 
         self.x = xi.XInput()
         self.x_alive = True
@@ -232,6 +233,7 @@ class Daemon:
                     if pad.tap:
                         self._tap_events(pad, pad.tap.cancel(time.monotonic()))
                 self._release_held("kapanış")
+                self._restore_mice()         # the extra buttons work as usual again
                 # Leave the user with working taps when PadForge is not running.
                 if self._applied_tapping_off and self.cfg["tap"]["enabled"]:
                     for pad in self.pads.values():
@@ -366,7 +368,8 @@ class Daemon:
 
     def rescan(self) -> None:
         infos = {i.node: i for i in device.list_touchpads()}
-        xdevs = {d.node: d for d in self.x.touchpads() if d.node}
+        alldev = self.x.devices()
+        xdevs = {d.node: d for d in alldev if d.is_touchpad and d.node}
         # Drop pads that disappeared.
         for node in list(self.pads):
             if node not in infos:
@@ -410,6 +413,7 @@ class Daemon:
                                f"{reader.axis_y.size_mm:.0f} mm, {reader.resolution:g} birim/mm")
             xd = xdevs.get(node)
             pad.xid = xd.id if xd else None
+        self._scan_mice(alldev)
         self._select_x()
 
     def _drop_pad(self, pad: Pad) -> None:
@@ -427,6 +431,104 @@ class Daemon:
         if all(p.last_count == 0 for p in self.pads.values()):
             self._release_held(f"{pad.info.name} ayrıldı")
         self.event(f"{pad.info.name} ayrıldı")
+
+    # ------------------------------------------------------------------- mice
+    def _mouse_cache(self, name: str) -> dict:
+        return self.cache.setdefault("mice", {}).setdefault(name, {})
+
+    def _scan_mice(self, alldev) -> None:
+        """Find the external mice and read their button maps (start, plug, unplug)."""
+        infos = {m.node: m for m in device.list_mice()}
+        found: dict[int, mouse.Mouse] = {}
+        for d in alldev:
+            info = infos.get(d.node or "")
+            if info is None or d.floating:
+                continue
+            try:
+                current = self.x.button_map(d.id)
+            except Exception as exc:
+                self.error(f"{info.name}: tuş eşlemesi okunamadı ({exc})")
+                continue
+            mc = self._mouse_cache(info.name)
+            found[d.id] = mouse.Mouse(info, d.id, mouse.base_map(current, set(mc.get("zeroed", []))),
+                                      current)
+            if d.id not in self.mice:
+                self.event(f"fare: {info.name} ({len(current)} tuş)")
+                if not mc.get("announced"):
+                    mc["announced"] = True
+                    save_cache(self.cache)
+                    # Later, not on the start-up path: GNOME's first notification after a
+                    # while held the X server for 2.2 s here (measured 2026-10-19).
+                    self._timer(f"duyuru {info.name}", 5000, lambda n=info.name: self._notify(
+                        f"Fare bulundu: {n}",
+                        "Yan tuşlarına ve tekerlek tıklamasına görev atayabilirsin: "
+                        "PadForge › Fare. Tuşa bas, hangisi olduğunu PadForge bulur."))
+        self.mice = found
+
+    def _apply_mice(self) -> None:
+        """Hide the buttons that have an action from applications, on each external mouse."""
+        assigned = {int(k) for k in self.cfg["mouse"]["buttons"]}
+        busy = False
+        for m in self.mice.values():
+            want = mouse.wanted_map(m.base, assigned)
+            if want == m.applied:
+                continue
+            try:
+                ok = self.x.set_button_map(m.xid, want)
+            except Exception as exc:
+                self.error(f"{m.info.name}: tuş eşlemesi yazılamadı ({exc})")
+                continue
+            if not ok:
+                busy = True              # a button that changes is held down right now
+                continue
+            m.applied = want
+            self._remember_zeroed(m)
+        if busy:
+            self._timer("mice", 500, self._apply_mice)
+
+    def _restore_mice(self) -> None:
+        for m in self.mice.values():
+            if m.applied != m.base:
+                try:
+                    if self.x.set_button_map(m.xid, m.base):
+                        m.applied = list(m.base)
+                        self._remember_zeroed(m)
+                except Exception:
+                    pass
+
+    def _remember_zeroed(self, m: mouse.Mouse) -> None:
+        """Note the buttons we switched off, so a crash leftover is undone next time."""
+        zeroed = [i + 1 for i, (a, b) in enumerate(zip(m.applied, m.base)) if a == 0 and b]
+        mc = self._mouse_cache(m.info.name)
+        if mc.get("zeroed", []) != zeroed:
+            mc["zeroed"] = zeroed
+            save_cache(self.cache)
+
+    def _mouse_button(self, m: mouse.Mouse, button: int) -> None:
+        if button == 2 or button >= 8:           # learn which extra buttons really exist
+            mc = self._mouse_cache(m.info.name)
+            if button not in mc.get("seen", []):
+                mc["seen"] = sorted(set(mc.get("seen", [])) | {button})
+                save_cache(self.cache)
+        b = self.cfg["mouse"]["buttons"].get(str(button))
+        if b is None or not m.hidden(button):
+            return                               # the application gets it as usual
+        self.event(f"fare: {mouse.label(button)} → {b['action']}")
+        if not self.pause_clients:
+            self.boost.hold()
+            self.executor.run(b["action"], b.get("arg"))
+
+    def _notify(self, summary: str, body: str) -> None:
+        """Desktop notification; best effort, never waits for an answer."""
+        try:
+            bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+            bus.call("org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+                     "org.freedesktop.Notifications", "Notify",
+                     GLib.Variant("(susssasa{sv}i)", ("PadForge", 0, APP_ID, summary, body,
+                                                      [], {}, -1)),
+                     None, Gio.DBusCallFlags.NONE, 2000, None, None, None)
+        except Exception as exc:
+            log.debug("bildirim gönderilemedi: %s", exc)
 
     def _ensure_vpointer(self) -> None:
         # Only useful when some touchpad's raw touches are readable.
@@ -488,6 +590,7 @@ class Daemon:
                 pad.xid = xd.id
         self._applied_tapping_off = tapping_off
         self._setup_vpointer_x()
+        self._apply_mice()
         self._self_write_until = time.monotonic() + 0.3
 
     def _schedule_reapply(self, why: str) -> None:
@@ -555,6 +658,9 @@ class Daemon:
             elif evtype == X.RawButtonPress:
                 if raw.detail in (1, 2, 3):
                     self._stop_coast()
+                m = self.mice.get(raw.deviceid)
+                if m is not None:
+                    self._mouse_button(m, raw.detail)
             else:
                 for pad in self.pads.values():
                     if pad.xid == raw.deviceid and pad.ratio is not None:
@@ -930,6 +1036,11 @@ class Daemon:
             "uinput": self.vp is not None, "gnome": self.gnome.available,
             "paused": bool(self.pause_clients), "dry_run": self.dry_run,
             "touchegg": self.touchegg, "boost": self.boost.active,
+            "mice": [{"name": m.info.name, "xid": m.xid, "buttons": len(m.base),
+                      "declared": m.info.declared_buttons,
+                      "seen": self._mouse_cache(m.info.name).get("seen", []),
+                      "hidden": [i + 1 for i, v in enumerate(m.applied) if v == 0]}
+                     for m in self.mice.values()],
             "errors": self.errors[-10:],
             "events": [{"t": t, "msg": m} for t, m in self.events[-15:]],
         }

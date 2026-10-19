@@ -178,3 +178,30 @@ def test_closing_does_not_write_back_an_old_copy(win):
     win.spin(0.3)
     assert json.loads(win.cfg_file.read_text())["gestures"]["bindings"]["swipe3_up"] == \
         {"action": "minimize"}
+
+
+def test_mouse_page_learns_a_pressed_button_and_assigns_it(win):
+    from padforge.gui.pages import ACTION_IDS
+    mp = page(win, "mouse")
+    win.show_page("mouse")
+    mp.status_changed({"mice": [{"name": "Logitech USB Receiver Mouse", "seen": [9]}]})
+    assert 9 in mp.rows, "buttons the service has seen get a row"
+    mp.pressed(8)                                    # the user presses the back button
+    row = mp.rows[8][0]
+    assert "az önce" in row.get_subtitle()
+    row.set_selected(1 + ACTION_IDS.index("super_key"))
+    assert saved(win)["mouse"]["buttons"] == {"8": {"action": "super_key"}}
+    row.set_selected(0)                              # back to "default"
+    assert saved(win)["mouse"]["buttons"] == {}
+
+
+def test_mouse_page_shortcut_argument(win):
+    from padforge.gui.pages import ACTION_IDS
+    mp = page(win, "mouse")
+    mp.pressed(9)
+    row, entry, _ = mp.rows[9]
+    row.set_selected(1 + ACTION_IDS.index("keys"))
+    assert entry.get_visible()
+    entry.set_text("<Super>Page_Down")
+    entry.emit("apply")
+    assert saved(win)["mouse"]["buttons"]["9"] == {"action": "keys", "arg": "<Super>Page_Down"}
