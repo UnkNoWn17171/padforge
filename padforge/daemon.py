@@ -118,6 +118,11 @@ class Daemon:
         self._xtest_wheel = [0.0, 0.0]
         self._drag_pressed = False
         self.mice: dict[int, mouse.Mouse] = {}      # external mice by X device id
+        self._mouse_holds: dict[tuple[int, int], tuple[str, float]] = {}  # (xid, button) -> key
+        self._ghold: mouse.GestureHold | None = None   # gesture button held right now
+        self._raw_down: dict[tuple[int, int], float] = {}   # (xid, button) -> raw press time
+        self._grab_end: dict[tuple[int, int], float] = {}   # (xid, button) -> grab release time
+        self._grab_logged: set[tuple[str, int]] = set()
 
         self.x = xi.XInput()
         self.x_alive = True
@@ -194,6 +199,9 @@ class Daemon:
             if "XTEST" in dev.name:
                 self.xtest_ids.add(dev.deviceid)
         self._select_x()
+        # A daemon killed while a mouse button or the window menu held a key through XTest
+        # leaves it down (every click would be Super + click): let go of them first.
+        self.executor.release_keys(sorted(set(mouse.HOLD_KEYS.values())))
         GLib.io_add_watch(self.x.d.fileno(), GLib.PRIORITY_HIGH,
                           GLib.IO_IN | GLib.IO_HUP | GLib.IO_ERR, self._on_x)
         self.rescan()
@@ -233,6 +241,7 @@ class Daemon:
                     if pad.tap:
                         self._tap_events(pad, pad.tap.cancel(time.monotonic()))
                 self._release_held("kapanış")
+                self._release_mouse("kapanış")
                 self._restore_mice()         # the extra buttons work as usual again
                 # Leave the user with working taps when PadForge is not running.
                 if self._applied_tapping_off and self.cfg["tap"]["enabled"]:
@@ -452,6 +461,9 @@ class Daemon:
             mc = self._mouse_cache(info.name)
             found[d.id] = mouse.Mouse(info, d.id, mouse.base_map(current, set(mc.get("zeroed", []))),
                                       current)
+            old = self.mice.get(d.id)
+            if old is not None and old.info.node == info.node:
+                found[d.id].held = old.held          # a rescan must not forget a held button
             if d.id not in self.mice:
                 self.event(f"fare: {info.name} ({len(current)} tuş)")
                 if not mc.get("announced"):
@@ -463,32 +475,68 @@ class Daemon:
                         f"Fare bulundu: {n}",
                         "Yan tuşlarına ve tekerlek tıklamasına görev atayabilirsin: "
                         "PadForge › Fare. Tuşa bas, hangisi olduğunu PadForge bulur."))
+        gone = set(self.mice) - set(found)
+        if gone and (self._ghold is not None or self._mouse_holds):
+            self._release_mouse("fare ayrıldı")
         self.mice = found
 
     def _apply_mice(self) -> None:
-        """Hide the buttons that have an action from applications, on each external mouse."""
-        assigned = {int(k) for k in self.cfg["mouse"]["buttons"]}
+        """Hide the buttons that have an action from applications, on each external mouse.
+
+        Gesture buttons are not hidden: a passive grab hands the mouse to us while they
+        are held, and X ends it by itself on the release.
+        """
+        buttons = self.cfg["mouse"]["buttons"]
+        hide = {int(k) for k, b in buttons.items() if b["action"] != "gesture"}
+        gestures = {int(k) for k, b in buttons.items() if b["action"] == "gesture"}
         busy = False
         for m in self.mice.values():
-            want = mouse.wanted_map(m.base, assigned)
-            if want == m.applied:
-                continue
-            try:
-                ok = self.x.set_button_map(m.xid, want)
-            except Exception as exc:
-                self.error(f"{m.info.name}: tuş eşlemesi yazılamadı ({exc})")
-                continue
-            if not ok:
-                busy = True              # a button that changes is held down right now
-                continue
-            m.applied = want
-            self._remember_zeroed(m)
+            want = mouse.wanted_map(m.base, hide)
+            if want != m.applied:
+                changing = {i + 1 for i, (a, w) in enumerate(zip(m.applied, want)) if a != w}
+                if changing & m.held:
+                    # Remapping a button that is down leaves Xorg with a phantom
+                    # "button 0" pressed (measured 2026-10-19): wait for the release.
+                    busy = True
+                else:
+                    try:
+                        ok = self.x.set_button_map(m.xid, want)
+                    except Exception as exc:
+                        self.error(f"{m.info.name}: tuş eşlemesi yazılamadı ({exc})")
+                        ok = None
+                    if ok:
+                        m.applied = want
+                        self._remember_zeroed(m)
+                    elif ok is not None:
+                        busy = True      # X says MappingBusy
+            for b in sorted(gestures - m.grabbed):
+                if b > len(m.base):
+                    continue
+                try:
+                    if self.x.grab_button(m.xid, b):
+                        m.grabbed.add(b)
+                        if (m.info.name, b) not in self._grab_logged:   # rescans re-grab quietly
+                            self._grab_logged.add((m.info.name, b))
+                            self.event(f"fare: {mouse.label(b)} hareket tuşu olarak hazır")
+                    else:
+                        self.error(f"{m.info.name}: {mouse.label(b)} başka bir program "
+                                   "tarafından yakalanmış")
+                except Exception as exc:
+                    self.error(f"{m.info.name}: hareket tuşu kurulamadı ({exc})")
+            for b in sorted(m.grabbed - gestures):
+                try:
+                    self.x.ungrab_button(m.xid, b)
+                except Exception:
+                    pass
+                m.grabbed.discard(b)
+                self._grab_logged.discard((m.info.name, b))
         if busy:
-            self._timer("mice", 500, self._apply_mice)
+            self._timer("mice", 300, self._apply_mice)
 
     def _restore_mice(self) -> None:
         for m in self.mice.values():
-            if m.applied != m.base:
+            changing = {i + 1 for i, (a, b) in enumerate(zip(m.applied, m.base)) if a != b}
+            if changing and not changing & m.held:   # a held one: the next start restores it
                 try:
                     if self.x.set_button_map(m.xid, m.base):
                         m.applied = list(m.base)
@@ -504,16 +552,27 @@ class Daemon:
             mc["zeroed"] = zeroed
             save_cache(self.cache)
 
-    def _mouse_button(self, m: mouse.Mouse, button: int) -> None:
+    def _learn_button(self, m: mouse.Mouse, button: int) -> None:
         if button == 2 or button >= 8:           # learn which extra buttons really exist
             mc = self._mouse_cache(m.info.name)
             if button not in mc.get("seen", []):
                 mc["seen"] = sorted(set(mc.get("seen", [])) | {button})
                 save_cache(self.cache)
+
+    def _mouse_button(self, m: mouse.Mouse, button: int) -> None:
+        self._learn_button(m, button)
         b = self.cfg["mouse"]["buttons"].get(str(button))
-        if b is None or not m.hidden(button):
-            return                               # the application gets it as usual
-        self.event(f"fare: {mouse.label(button)} → {b['action']}")
+        if b is None or b["action"] == "gesture" or not m.hidden(button):
+            return                               # the application (or the grab) gets it
+        if b["action"] in mouse.HOLD_KEYS:
+            if not self.pause_clients and (m.xid, button) not in self._mouse_holds:
+                key = mouse.HOLD_KEYS[b["action"]]
+                self.executor.hold_key(key, True)
+                self._mouse_holds[(m.xid, button)] = (key, time.monotonic())
+                self.event(f"fare: {mouse.label(button)} basılı → {key}")
+            return
+        self.event(f"fare: {mouse.label(button)} → {b['action']}"
+                   + (" (arayüz bekletiyor, çalıştırılmadı)" if self.pause_clients else ""))
         if not self.pause_clients:
             self.boost.hold()
             self.executor.run(b["action"], b.get("arg"))
@@ -529,6 +588,83 @@ class Daemon:
                      None, Gio.DBusCallFlags.NONE, 2000, None, None, None)
         except Exception as exc:
             log.debug("bildirim gönderilemedi: %s", exc)
+
+    def _mouse_button_up(self, m: mouse.Mouse, button: int) -> None:
+        held = self._mouse_holds.pop((m.xid, button), None)
+        if held is not None:
+            self.executor.hold_key(held[0], False)
+
+    def _gesture_event(self, m: mouse.Mouse, evtype: int, data) -> None:
+        """Events of a mouse that a held gesture button handed to us (passive grab)."""
+        X = xi.xinput
+        g = self._ghold
+        if evtype == X.ButtonPress:
+            if g is None and data.detail in m.grabbed:
+                b = self.cfg["mouse"]["buttons"].get(str(data.detail))
+                if b is None or b["action"] != "gesture":
+                    return
+                self._learn_button(m, data.detail)
+                self._ghold = mouse.GestureHold(data.detail, b, data.root_x, data.root_y,
+                                                time.monotonic())
+                log.info("fare hareket tuşu basıldı: %s", mouse.label(data.detail))
+                self.boost.hold()
+            elif g is not None and data.detail in (4, 5):
+                g.note(f"W{data.detail}", time.monotonic())
+                self._ghold_run(g.wheel(data.detail == 5))
+            elif g is not None:
+                g.note(f"P{data.detail}", time.monotonic())
+                g.others += 1
+        elif evtype == X.Motion and g is not None:
+            if not g.trail or not g.trail[-1].startswith("M"):
+                g.note("M", time.monotonic())
+            self._ghold_run(g.move(data.root_x, data.root_y))
+        elif evtype == X.ButtonRelease:
+            m.held.discard(data.detail)
+            if g is not None and data.detail != g.button:
+                g.note(f"R{data.detail}", time.monotonic())
+            if g is not None and data.detail == g.button:
+                self._ghold = None
+                now = time.monotonic()
+                self._grab_end[(m.xid, g.button)] = now
+                acts = g.release(now)
+                log.info("fare hareket tuşu bırakıldı: %s", g.summary(now, acts))
+                self._ghold_run(acts)
+                # The mouse was detached while held and X now puts the cursor where the
+                # hidden movement led: put it back where the press was.
+                if abs(data.root_x - g.x0) > 1 or abs(data.root_y - g.y0) > 1:
+                    try:
+                        self.root.warp_pointer(int(g.x0), int(g.y0))
+                    except Exception:
+                        pass
+
+    def _ghold_run(self, acts: list[tuple]) -> None:
+        for a in acts:
+            if a[0] == "end":
+                self.executor.end()
+                continue
+            if a[0] in ("run", "begin"):
+                self.event(f"fare hareket tuşu → {a[1]['action']}"
+                           + (" (arayüz bekletiyor)" if self.pause_clients else ""))
+            if self.pause_clients:
+                continue
+            if a[0] == "run":
+                self.executor.run(a[1]["action"], a[1].get("arg"))
+            elif a[0] == "begin":
+                self.executor.begin(a[1]["action"], a[1].get("arg"), a[2])
+            elif a[0] == "step":
+                self.executor.step(a[1])
+
+    def _release_mouse(self, why: str) -> None:
+        """Let go of everything a mouse button holds: its key, its window menu."""
+        for (_xid, _button), (key, _t) in list(self._mouse_holds.items()):
+            log.info("fare tuşu %s bırakıldı (%s)", key, why)
+            self.executor.hold_key(key, False)
+        self._mouse_holds.clear()
+        if self._ghold is not None:
+            g, self._ghold = self._ghold, None
+            if g.cont:
+                log.info("fare hareket tuşu bitirildi (%s)", why)
+                self.executor.end()
 
     def _ensure_vpointer(self) -> None:
         # Only useful when some touchpad's raw touches are readable.
@@ -612,7 +748,8 @@ class Daemon:
     def _select_x(self) -> None:
         masks = [(xi.xinput.AllDevices,
                   xi.xinput.HierarchyChangedMask | xi.xinput.PropertyEventMask
-                  | xi.xinput.RawKeyPressMask | xi.xinput.RawButtonPressMask)]
+                  | xi.xinput.RawKeyPressMask | xi.xinput.RawButtonPressMask
+                  | xi.xinput.RawButtonReleaseMask)]
         for pad in self.pads.values():
             if pad.xid is not None:
                 masks.append((pad.xid, xi.xinput.RawMotionMask))
@@ -645,7 +782,12 @@ class Daemon:
             ours = {p.xid for p in self.pads.values() if p.xid is not None}
             if data.deviceid in ours or data.deviceid == self.vp_xid:
                 self._schedule_reapply(f"{name} değişti (aygıt {data.deviceid})")
-        elif evtype in (X.RawKeyPress, X.RawButtonPress, X.RawMotion):
+        elif evtype in (X.ButtonPress, X.ButtonRelease, X.Motion):
+            # Only a gesture button's passive grab sends us these.
+            m = self.mice.get(getattr(ev.data, "deviceid", None))
+            if m is not None:
+                self._gesture_event(m, evtype, ev.data)
+        elif evtype in (X.RawKeyPress, X.RawButtonPress, X.RawButtonRelease, X.RawMotion):
             raw = xi.parse_raw_event(evtype, ev.data)
             if raw.sourceid in self.xtest_ids or raw.deviceid in self.xtest_ids:
                 return
@@ -660,7 +802,25 @@ class Daemon:
                     self._stop_coast()
                 m = self.mice.get(raw.deviceid)
                 if m is not None:
+                    m.held.add(raw.detail)
+                    if raw.detail >= 8:
+                        self._raw_down[(m.xid, raw.detail)] = now
                     self._mouse_button(m, raw.detail)
+            elif evtype == X.RawButtonRelease:
+                m = self.mice.get(raw.deviceid)
+                if m is not None:
+                    m.held.discard(raw.detail)
+                    t = self._raw_down.pop((m.xid, raw.detail), None)
+                    if raw.detail >= 8:
+                        # The physical hold, independent of grabs: it tells a really short
+                        # press from a grab that X ended early.
+                        ge = self._grab_end.pop((m.xid, raw.detail), None)
+                        log.info("fare: %s fiziksel olarak %s%s", mouse.label(raw.detail),
+                                 f"{(now - t) * 1000:.0f} ms basılı kaldı" if t is not None
+                                 else "bırakıldı (basışı görülmedi)",
+                                 f"; PadForge'un tutuşu bundan {(now - ge) * 1000:.0f} ms önce "
+                                 "bitmişti" if ge is not None and now - ge < 10 else "")
+                    self._mouse_button_up(m, raw.detail)
             else:
                 for pad in self.pads.values():
                     if pad.xid == raw.deviceid and pad.ratio is not None:
@@ -755,15 +915,25 @@ class Daemon:
             log.info("sürükleme düğmesi bırakıldı (%s)", why)
             self._pointer_button(1, False)
             self._drag_pressed = False
-        if self.executor._cont is not None:
+        if self.executor._cont is not None and not self._mouse_owns_cont():
             log.info("sürekli eylem bitirildi (%s)", why)
             self.executor.end()
+
+    def _mouse_owns_cont(self) -> bool:
+        """The running continuous action belongs to a held mouse button, not to the pad."""
+        return self._ghold is not None and self._ghold.cont
 
     def _watchdog(self) -> bool:
         """Every second: nothing may stay held while no finger is on any pad."""
         self.boost.tick()
-        if self._drag_pressed or self.executor._cont is not None or self.wmdrag.pressed:
-            now = time.monotonic()
+        now = time.monotonic()
+        # Mouse holds end on the button's release; this only covers a release we missed.
+        if ((self._ghold is not None and now - self._ghold.t0 > mouse.MAX_HOLD_S)
+                or any(now - t > mouse.MAX_HOLD_S for _k, t in self._mouse_holds.values())):
+            self._release_mouse("bekçi")
+            self._flush_x()
+        cont = self.executor._cont is not None and not self._mouse_owns_cont()
+        if self._drag_pressed or cont or self.wmdrag.pressed:
             idle = all(p.last_count == 0 or now - p.last_time > 2.0 for p in self.pads.values())
             if idle:
                 self._release_held("bekçi")
@@ -1039,7 +1209,8 @@ class Daemon:
             "mice": [{"name": m.info.name, "xid": m.xid, "buttons": len(m.base),
                       "declared": m.info.declared_buttons,
                       "seen": self._mouse_cache(m.info.name).get("seen", []),
-                      "hidden": [i + 1 for i, v in enumerate(m.applied) if v == 0]}
+                      "hidden": [i + 1 for i, v in enumerate(m.applied) if v == 0],
+                      "gesture": sorted(m.grabbed), "held": sorted(m.held)}
                      for m in self.mice.values()],
             "errors": self.errors[-10:],
             "events": [{"t": t, "msg": m} for t, m in self.events[-15:]],

@@ -23,6 +23,8 @@ GESTURE_KEYS = [
 # Mouse buttons that may get an action: the wheel click and the extra buttons.
 # Left/right (1, 3) and the wheel (4-7) are never taken over.
 MOUSE_BUTTONS = (2,) + tuple(range(8, 33))
+# A "gesture" mouse button: tapped, or held while turning the wheel / flicking the mouse.
+MOUSE_GESTURE_PARTS = ("tap", "wheel", "up", "down", "left", "right")
 
 # The recommended layout, as simple as possible:
 #   3 fingers up = the Super key (GNOME: Activities)
@@ -293,7 +295,11 @@ def _normalize_mouse_buttons(value: dict) -> dict:
         if isinstance(b, str):
             b = {"action": b}
         if isinstance(b, dict) and isinstance(b.get("action"), str):
-            out[str(int(key))] = _normalize_binding(b)
+            if b["action"] == "gesture":
+                out[str(int(key))] = {"action": "gesture", **{
+                    part: _normalize_binding(b.get(part, "none")) for part in MOUSE_GESTURE_PARTS}}
+            else:
+                out[str(int(key))] = _normalize_binding(b)
     return out
 
 

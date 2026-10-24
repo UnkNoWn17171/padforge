@@ -202,3 +202,57 @@ def test_hidden_mouse_button_still_reported_raw(x):
         assert press(e.BTN_SIDE) == [("raw", 8), ("app", 8)], "given back"
     finally:
         ui.close()
+
+
+def test_gesture_button_grab_hands_the_mouse_over_and_back(x):
+    """A gesture button's passive grab: while held the mouse is ours (motion, wheel) and
+    detached; the release ends the grab by itself and reattaches it."""
+    import select
+    from evdev import UInput
+    from evdev import ecodes as e
+    X = xi.xinput
+    ui = UInput({e.EV_KEY: [e.BTN_LEFT, e.BTN_RIGHT, e.BTN_MIDDLE, e.BTN_SIDE],
+                 e.EV_REL: [e.REL_X, e.REL_Y, e.REL_WHEEL, e.REL_WHEEL_HI_RES]},
+                name=f"{virtual.TEST_PREFIX} Gesture {os.getpid()}", vendor=0x1209,
+                product=0x7e5a, bustype=e.BUS_USB)
+    try:
+        dev = virtual.wait_x_device(x, ui.name)
+        assert dev is not None
+        time.sleep(0.5)
+        root = x.d.screen().root
+        start = root.query_pointer()             # the user's cursor: put back at the end
+        assert x.grab_button(dev.id, 8)
+
+        def pump():
+            got, end = [], time.monotonic() + 0.25
+            while time.monotonic() < end:
+                select.select([x.d.fileno()], [], [], 0.02)
+                while x.d.pending_events():
+                    ev = x.d.next_event()
+                    k = getattr(ev, "evtype", None)
+                    if k in (X.ButtonPress, X.ButtonRelease) and ev.data.deviceid == dev.id:
+                        got.append(("press" if k == X.ButtonPress else "release", ev.data.detail))
+                    elif k == X.Motion and ev.data.deviceid == dev.id:
+                        got.append(("motion",))
+            return got
+
+        ui.write(e.EV_KEY, e.BTN_SIDE, 1)
+        ui.syn()
+        assert ("press", 8) in pump()
+        assert x.find(ui.name).floating, "detached while held: the cursor stands still"
+        ui.write(e.EV_REL, e.REL_X, 40)
+        ui.syn()
+        assert ("motion",) in pump()
+        ui.write(e.EV_REL, e.REL_WHEEL_HI_RES, -120)
+        ui.write(e.EV_REL, e.REL_WHEEL, -1)
+        ui.syn()
+        assert ("press", 5) in pump()
+        ui.write(e.EV_KEY, e.BTN_SIDE, 0)
+        ui.syn()
+        assert ("release", 8) in pump()
+        assert not x.find(ui.name).floating, "X ended the grab on the release by itself"
+        x.ungrab_button(dev.id, 8)
+        root.warp_pointer(start.root_x, start.root_y)
+        x.d.sync()
+    finally:
+        ui.close()

@@ -93,3 +93,13 @@ def test_parse_raw_event():
     assert ev.deviceid == 8 and ev.time == 12345
     assert ev.values == {0: pytest.approx(2.5), 3: pytest.approx(-120.0)}
     assert ev.raw == {0: pytest.approx(3.0), 3: pytest.approx(-15.0)}
+
+
+def test_button_state_with_a_phantom_button_0_still_parses():
+    """Xorg can report bit 0 set; python-xlib's own parser raised AssertionError on it."""
+    import importlib
+    from Xlib.ext import xinput
+    importlib.import_module("padforge.xinput")          # installs the lenient parser
+    mask, rest = xinput.ButtonState("state").parse_binary_value(
+        bytes([0b00000011, 0, 0, 0]) + b"x", None, 8, None)
+    assert rest == b"x"

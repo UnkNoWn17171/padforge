@@ -16,6 +16,21 @@ from Xlib.ext import xinput
 
 from . import accel
 
+
+def _lenient_button_state(self, data, display, length, fmt):
+    """python-xlib asserts that bit 0 ("button 0") of a button state is clear.
+
+    Xorg sets it when a button mapped to 0 (hidden) is down and its mapping changes
+    before the release; after that every device query raised AssertionError, which
+    stopped the daemon's rescans (seen 2026-10-19). Bit 0 means nothing: drop it.
+    """
+    mask_len = 4 * ((((length + 7) >> 3) + 3) >> 2)
+    mask_value = int.from_bytes(bytes(data[:mask_len]), "little")
+    return xinput.ButtonMask(mask_value >> 1, length), data[mask_len:]
+
+
+xinput.ButtonState.parse_binary_value = _lenient_button_state
+
 P_TAP = "libinput Tapping Enabled"
 P_TAP_DRAG = "libinput Tapping Drag Enabled"
 P_TAP_DRAG_LOCK = "libinput Tapping Drag Lock Enabled"
@@ -295,6 +310,26 @@ class XInput:
         r = SetDeviceButtonMapping(display=self.d.display, opcode=self.opcode, deviceid=devid,
                                    map=list(mapping))
         return r.status == 0
+
+    # -- gesture buttons -------------------------------------------------------------------
+    def grab_button(self, devid: int, button: int) -> bool:
+        """XI2 passive grab of ``button`` on that one device.
+
+        Pressing it hands the whole device to us (motion, wheel, other buttons) and the
+        X server gives it back by itself on the release, so nothing can stay stuck
+        even if the daemon hangs. Meanwhile the device is detached: the cursor stands
+        still, and on the release it jumps by the movement made (measured 2026-10-19).
+        """
+        r = xinput.passive_grab_device(
+            self.d.screen().root, devid, X.CurrentTime, button, xinput.GrabtypeButton,
+            xinput.GrabModeAsync, xinput.GrabModeAsync, False,
+            xinput.ButtonPressMask | xinput.ButtonReleaseMask | xinput.MotionMask,
+            [xinput.AnyModifier])
+        return not list(r.modifiers)
+
+    def ungrab_button(self, devid: int, button: int) -> None:
+        xinput.passive_ungrab_device(self.d.screen().root, devid, button,
+                                     xinput.GrabtypeButton, [xinput.AnyModifier])
 
 
 def _same(current: Any, wanted: list[Any]) -> bool:

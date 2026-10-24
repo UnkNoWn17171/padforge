@@ -28,7 +28,7 @@ def test_parse_accelerator_errors(bad):
 
 def test_catalogue_consistency():
     assert actions.CONTINUOUS == {"window_cycle", "app_switch", "tab_switch", "zoom", "volume",
-                                  "brightness"}
+                                  "brightness", "workspace"}
     for key in actions.KEY_ACTIONS:
         assert key in actions.ACTIONS
     for key in actions.GSETTINGS_KEYS:
@@ -178,3 +178,19 @@ def test_super_key_is_a_one_shot_action():
     ex = make_exec()
     ex.run("super_key")
     assert ex.log == ["tuş: <Super>"]
+
+
+def test_hold_key_and_release_keys():
+    ex = KeyRecorder()
+    ex.hold_key("Super_L", True)
+    ex.hold_key("Super_L", False)
+    ex.release_keys(["Shift_L"])
+    assert ex.calls == [("key", 133, True), ("key", 133, False), ("key", 50, False)]
+
+
+def test_continuous_workspace_steps():
+    ex = make_exec()
+    ex.begin("workspace", None, +1)
+    ex.step(-1)
+    ex.end()
+    assert ex.log == ["çalışma alanı +1", "çalışma alanı -1"]

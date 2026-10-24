@@ -10,6 +10,8 @@ def bare():
     d.wmdrag = SuperDrag()
     d.errors = []
     d.events = []
+    d.mice, d._mouse_holds, d._ghold, d._raw_down, d._grab_end = {}, {}, None, {}, {}
+    d._grab_logged = set()
     d._timers = {}
     d._reapply_times = []
     d.scheduled = 0

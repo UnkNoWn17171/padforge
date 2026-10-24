@@ -32,6 +32,7 @@ ACTIONS: dict[str, ActionInfo] = {
     "show_desktop": ActionInfo("Masaüstünü göster / geri getir", "Masaüstü"),
     "workspace_next": ActionInfo("Sonraki çalışma alanı", "Masaüstü"),
     "workspace_prev": ActionInfo("Önceki çalışma alanı", "Masaüstü"),
+    "workspace": ActionInfo("Çalışma alanı değiştir (sürekli)", "Masaüstü", continuous=True),
     "window_cycle": ActionInfo("Pencere değiştir (Super+tekerlek menüsü)", "Pencere",
                                continuous=True),
     "app_switch": ActionInfo("Uygulama değiştir (kaydırdıkça ilerler)", "Pencere", continuous=True),
@@ -68,7 +69,7 @@ CONTINUOUS = {k for k, v in ACTIONS.items() if v.continuous}
 
 # For these, moving the fingers *down* means "next" (like turning a mouse wheel down);
 # for the others up means more/next (volume, brightness, zoom).
-VERTICAL_DOWN_IS_NEXT = {"window_cycle", "app_switch", "tab_switch"}
+VERTICAL_DOWN_IS_NEXT = {"window_cycle", "app_switch", "tab_switch", "workspace"}
 
 # The user's own GNOME extension "Super Scroll Switch": Super held + Step(+1/-1)
 # shows its in-place window switcher; releasing Super activates the chosen window.
@@ -304,6 +305,28 @@ class Executor:
             self._key(c, False)
         self.d.sync()
 
+    def hold_key(self, keysym_name: str, down: bool) -> None:
+        """Press or release one key and leave it so (a mouse button acting as Super...)."""
+        self._record(f"tuş {'bas' if down else 'bırak'}: {keysym_name}")
+        if self.dry_run:
+            return
+        self._key(self._keycode(keysym_name)[0], down)
+        self.d.sync()
+
+    def release_keys(self, names) -> None:
+        """Release keys an earlier, crashed daemon may have left held through XTest.
+
+        Only XTest's own key state changes: a key held on the real keyboard stays held.
+        """
+        if self.dry_run:
+            return
+        for name in names:
+            try:
+                self._key(self._keycode(name)[0], False)
+            except ValueError:
+                pass
+        self.d.sync()
+
     def button(self, button: int, down: bool) -> None:
         self._record(f"düğme {button} {'bas' if down else 'bırak'}")
         if self.dry_run:
@@ -514,6 +537,8 @@ class Executor:
                 self.send_shortcut("XF86MonBrightnessUp" if inc > 0 else "XF86MonBrightnessDown")
             elif action == "zoom":
                 self._wheel(inc > 0, ctrl=True)
+            elif action == "workspace":
+                self.workspace(1 if inc > 0 else -1)
             elif action == "tab_switch":
                 self.send_shortcut("<Control>Page_Down" if inc > 0 else "<Control>Page_Up")
         except Exception as exc:

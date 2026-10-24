@@ -181,27 +181,57 @@ def test_closing_does_not_write_back_an_old_copy(win):
 
 
 def test_mouse_page_learns_a_pressed_button_and_assigns_it(win):
-    from padforge.gui.pages import ACTION_IDS
+    from padforge.gui.pages import ACTION_IDS, MOUSE_MODES
     mp = page(win, "mouse")
     win.show_page("mouse")
     mp.status_changed({"mice": [{"name": "Logitech USB Receiver Mouse", "seen": [9]}]})
     assert 9 in mp.rows, "buttons the service has seen get a row"
     mp.pressed(8)                                    # the user presses the back button
-    row = mp.rows[8][0]
+    row = mp.rows[8]["row"]
     assert "az önce" in row.get_subtitle()
-    row.set_selected(1 + ACTION_IDS.index("super_key"))
+    row.set_selected(1 + len(MOUSE_MODES) + ACTION_IDS.index("super_key"))
     assert saved(win)["mouse"]["buttons"] == {"8": {"action": "super_key"}}
     row.set_selected(0)                              # back to "default"
     assert saved(win)["mouse"]["buttons"] == {}
 
 
 def test_mouse_page_shortcut_argument(win):
-    from padforge.gui.pages import ACTION_IDS
+    from padforge.gui.pages import ACTION_IDS, MOUSE_MODES
     mp = page(win, "mouse")
     mp.pressed(9)
-    row, entry, _ = mp.rows[9]
-    row.set_selected(1 + ACTION_IDS.index("keys"))
+    row, entry = mp.rows[9]["row"], mp.rows[9]["entry"]
+    row.set_selected(1 + len(MOUSE_MODES) + ACTION_IDS.index("keys"))
     assert entry.get_visible()
     entry.set_text("<Super>Page_Down")
     entry.emit("apply")
     assert saved(win)["mouse"]["buttons"]["9"] == {"action": "keys", "arg": "<Super>Page_Down"}
+
+
+def test_mouse_page_does_not_hold_back_actions(win, monkeypatch):
+    """The first version paused the service on this page: a freshly assigned button
+    then did nothing at all, which looked like the setting had not been applied."""
+    from padforge.gui import service
+    calls = []
+    monkeypatch.setattr(service.PauseHandle, "acquire", lambda self: calls.append(1) or True)
+    win.show_page("mouse")
+    win.spin(0.2)
+    assert calls == []
+
+
+
+def test_mouse_page_gesture_button(win):
+    from padforge import mouse
+    from padforge.gui.pages import MOUSE_MODES, WHEEL_IDS
+    mp = page(win, "mouse")
+    mp.pressed(9)
+    r = mp.rows[9]
+    r["row"].set_selected(1 + MOUSE_MODES.index("gesture"))
+    assert saved(win)["mouse"]["buttons"]["9"] == mouse.gesture_defaults(9)
+    assert r["parts"].get_visible()
+    wheel_row, ids = r["part_rows"]["wheel"]
+    assert ids[wheel_row.get_selected()] == "window_cycle"
+    wheel_row.set_selected(WHEEL_IDS.index("volume"))
+    assert saved(win)["mouse"]["buttons"]["9"]["wheel"] == {"action": "volume"}
+    r["row"].set_selected(1 + MOUSE_MODES.index("hold_super"))
+    assert saved(win)["mouse"]["buttons"]["9"] == {"action": "hold_super"}
+    assert not r["parts"].get_visible() and not r["test"].get_sensitive()

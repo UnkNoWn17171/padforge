@@ -460,6 +460,8 @@ GESTURE_LABELS = {
     "tap4": "4 parmakla dokun",
 }
 ACTION_IDS = list(ACTIONS)
+WHEEL_IDS = ["none"] + [a for a in ACTIONS if ACTIONS[a].continuous]
+MOUSE_MODES = ["gesture", "hold_super", "hold_ctrl", "hold_shift", "hold_alt"]
 SHORTCUT_HINT = "Kısayol (ör. <Super>Page_Down veya Ctrl+Alt+T)"
 
 
@@ -624,14 +626,15 @@ class MousePage(Page):
         self.mice_rows: list = []
         self._mice_sig = None
         self.buttons_group = self.group(
-            page, "Tuşlar", "Bu sayfa açıkken fare tuşları ve hareketler görev çalıştırmaz: "
-                            "bastığın tuş yalnızca bulunur. Denemek için ▶.")
+            page, "Tuşlar", "Bir tuşa görev ver ya da onu bir 'hareket tuşu' yap: dokununca bir iş, "
+                            "basılı tutup tekerleği çevirince (ör. pencere değiştir) ya da itince "
+                            "başka bir iş. 'Basılıyken Super' tuşu Super gibi tutar. Seçtiğin her "
+                            "şey hemen geçerli olur.")
         self.hint = Adw.ActionRow(title="Farendeki bir tuşa bas",
                                   subtitle="Yan tuşa ya da tekerleğe bas: tuşun satırı belirir.")
         self.hint.add_prefix(Gtk.Image(icon_name="input-mouse-symbolic"))
         self.buttons_group.add(self.hint)
         self.rows: dict[int, tuple] = {}
-        self.pause = service.PauseHandle()
         self._x = None
         self._xids: set[int] = set()
         self._watch = 0
@@ -675,9 +678,11 @@ class MousePage(Page):
 
     def _ensure_row(self, button: int):
         if button in self.rows:
-            return self.rows[button][0]
-        labels = ["Varsayılan (her zamanki gibi)"] + [
-            ACTIONS[a].label + ("  ⟳" if ACTIONS[a].continuous else "") for a in ACTION_IDS]
+            return self.rows[button]["row"]
+        labels = (["Varsayılan (her zamanki gibi)"]
+                  + [mouse.MODE_LABELS[m] for m in MOUSE_MODES]
+                  + [ACTIONS[a].label + ("  ⟳" if ACTIONS[a].continuous else "")
+                     for a in ACTION_IDS])
         row = Adw.ComboRow(title=esc(mouse.label(button)), subtitle=f"tuş {button}",
                            model=Gtk.StringList.new(labels), enable_search=True)
         test = self.button(None, lambda: self._test(button), "flat",
@@ -685,17 +690,39 @@ class MousePage(Page):
         row.add_suffix(test)
         entry = Adw.EntryRow(title=esc(SHORTCUT_HINT), show_apply_button=True)
         entry.set_visible(False)
+        parts = Adw.ExpanderRow(title="Hareket tuşu",
+                                subtitle="Dokun · basılı tutup tekerleği çevir · basılı tutup it")
+        parts.set_visible(False)
+        part_rows = {}
+        for part in config.MOUSE_GESTURE_PARTS:
+            ids = WHEEL_IDS if part == "wheel" else ACTION_IDS
+            prow = Adw.ComboRow(title=esc(mouse.PART_LABELS[part]), enable_search=True,
+                                model=Gtk.StringList.new([ACTIONS[a].label for a in ids]))
+            prow.connect("notify::selected",
+                         lambda r, _p, part=part, ids=ids: self._part_changed(
+                             button, part, ids[r.get_selected()]))
+            parts.add_row(prow)
+            part_rows[part] = (prow, ids)
 
         def changed(r, _p):
             if self.win.loading:
                 return
             buttons = dict(self.win.get("mouse.buttons"))
-            if r.get_selected() == 0:
+            old = buttons.get(str(button), {})
+            i = r.get_selected()
+            if i == 0:
                 buttons.pop(str(button), None)
+            elif i <= len(MOUSE_MODES):
+                mode = MOUSE_MODES[i - 1]
+                if mode == "gesture":
+                    buttons[str(button)] = (old if old.get("action") == "gesture"
+                                            else mouse.gesture_defaults(button))
+                    parts.set_expanded(True)
+                else:
+                    buttons[str(button)] = {"action": mode}
             else:
-                action = ACTION_IDS[r.get_selected() - 1]
+                action = ACTION_IDS[i - 1 - len(MOUSE_MODES)]
                 b = {"action": action}
-                old = buttons.get(str(button), {})
                 if ACTIONS[action].needs_arg and old.get("action") == action and old.get("arg"):
                     b["arg"] = old["arg"]
                 buttons[str(button)] = b
@@ -717,43 +744,74 @@ class MousePage(Page):
             self.win.toast("Kaydedildi")
         row.connect("notify::selected", changed)
         entry.connect("apply", applied)
-        self.rows[button] = (row, entry, test)
+        self.rows[button] = {"row": row, "entry": entry, "test": test, "parts": parts,
+                             "part_rows": part_rows}
         # keep the rows in button order
         for b in sorted(self.rows):
-            for w in self.rows[b][:2]:
+            for w in self._row_widgets(b):
                 if w.get_parent() is not None:
                     self.buttons_group.remove(w)
         for b in sorted(self.rows):
-            self.buttons_group.add(self.rows[b][0])
-            self.buttons_group.add(self.rows[b][1])
+            for w in self._row_widgets(b):
+                self.buttons_group.add(w)
         self._load_row(button)
         return row
 
+    def _row_widgets(self, button: int):
+        r = self.rows[button]
+        return r["row"], r["entry"], r["parts"]
+
+    def _part_changed(self, button: int, part: str, action: str):
+        if self.win.loading:
+            return
+        buttons = dict(self.win.get("mouse.buttons"))
+        b = dict(buttons.get(str(button), {}))
+        if b.get("action") != "gesture":
+            return
+        b[part] = {"action": action}
+        buttons[str(button)] = b
+        self.win.set("mouse.buttons", buttons)
+
     def _load_row(self, button: int):
-        row, entry, test = self.rows[button]
+        r = self.rows[button]
         b = (self.win.get("mouse.buttons") or {}).get(str(button))
         action = b["action"] if b else None
         self.win.loading += 1
         try:
-            row.set_selected(1 + ACTION_IDS.index(action) if action in ACTION_IDS else 0)
-            entry.set_text(b.get("arg", "") if b else "")
+            if action in MOUSE_MODES:
+                index = 1 + MOUSE_MODES.index(action)
+            elif action in ACTION_IDS:
+                index = 1 + len(MOUSE_MODES) + ACTION_IDS.index(action)
+            else:
+                index = 0
+            r["row"].set_selected(index)
             needs = bool(action in ACTIONS and ACTIONS[action].needs_arg)
-            entry.set_visible(needs)
+            r["entry"].set_text(b.get("arg", "") if needs else "")
+            r["entry"].set_visible(needs)
             if needs:
-                entry.set_title(esc("Komut (ör. gnome-terminal)" if action == "command"
-                                    else SHORTCUT_HINT))
-            test.set_sensitive(b is not None)
+                r["entry"].set_title(esc("Komut (ör. gnome-terminal)" if action == "command"
+                                         else SHORTCUT_HINT))
+            r["parts"].set_visible(action == "gesture")
+            if action == "gesture":
+                for part, (prow, ids) in r["part_rows"].items():
+                    a = (b.get(part) or {}).get("action", "none")
+                    prow.set_selected(ids.index(a) if a in ids else 0)
+            # ▶ runs the action (a gesture button's tap); a hold mode cannot be "run"
+            r["test"].set_sensitive(action is not None and action not in mouse.HOLD_KEYS)
         finally:
             self.win.loading -= 1
 
     def _test(self, button: int):
         b = (self.win.get("mouse.buttons") or {}).get(str(button))
-        if b:
+        if b and b["action"] == "gesture":
+            b = b.get("tap")
+        if b and b["action"] in ACTIONS and b["action"] != "none":
             self.win.run_action(b["action"], b.get("arg"))
 
     # -- "press a button" ----------------------------------------------------------------
     def shown(self):
-        self.pause.acquire()
+        # Actions keep running while this page is open: pausing them here (as the first
+        # version did) made a freshly assigned button look broken.
         if self._x is not None:
             return
         try:
@@ -769,7 +827,6 @@ class MousePage(Page):
             self.hint.set_subtitle(esc(f"Tuşlar dinlenemiyor: {exc}"))
 
     def hidden(self):
-        self.pause.release()
         if self._watch:
             GLib.source_remove(self._watch)
             self._watch = 0
@@ -800,7 +857,9 @@ class MousePage(Page):
         """A mouse button was pressed while the page is open: show (and mark) its row."""
         row = self._ensure_row(button)
         self.hint.set_subtitle(esc(f"Son basılan: {mouse.label(button)} (tuş {button})"))
-        row.set_subtitle(f"tuş {button} · az önce basıldı")
+        b = (self.win.get("mouse.buttons") or {}).get(str(button))
+        ran = b is not None and b["action"] in ACTIONS and b["action"] != "none"
+        row.set_subtitle(f"tuş {button} · az önce basıldı" + (" · görevi çalıştı" if ran else ""))
         if button in self._flash:
             GLib.source_remove(self._flash[button])
 
